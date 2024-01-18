@@ -1,0 +1,9 @@
+data
+results
+*.log
+.*
+!/.gitignore
+*.pklz
+wandb
+__pycache__
+
