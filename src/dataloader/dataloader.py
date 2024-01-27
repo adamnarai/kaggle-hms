@@ -12,12 +12,10 @@ from albumentations.pytorch import ToTensorV2
 class SpecDataset(Dataset):
     """HMS spectrogram dataset dataset."""
 
-    TARGETS = ['seizure_vote', 'lpd_vote', 'gpd_vote', 'lrda_vote', 'grda_vote', 'other_vote']
-
-    def __init__(self, df, spec_data, transform=None):
+    def __init__(self, CFG, df, spec_data, transform=None):
         self.df = df
         self.spec_ids = self.df['spectrogram_id'].values
-        self.targets = self.df[self.TARGETS].values
+        self.targets = self.df[CFG.TARGETS].values
         self.spec_offsets = (self.df['spectrogram_label_offset_seconds'].values // 2).astype(int)
         self.spec_data = spec_data
         self.transform = transform
@@ -69,17 +67,19 @@ def get_spec_datasets(CFG, spec_data, df_train, df_validation):
         # transforms.Normalize(mean=CFG['img_color_mean'], std=CFG['img_color_std'])
     ])}
     
-    train_dataset = SpecDataset(df=df_train, 
-                        spec_data=spec_data,
-                        transform=transform['train'])
-    validation_dataset = SpecDataset(df=df_validation, 
-                        spec_data=spec_data,
-                        transform=transform['validation'])
+    train_dataset = SpecDataset(CFG, 
+                                df=df_train, 
+                                spec_data=spec_data,
+                                transform=transform['train'])
+    validation_dataset = SpecDataset(CFG, 
+                                     df=df_validation, 
+                                     spec_data=spec_data,
+                                     transform=transform['validation'])
     datasets = {'train': train_dataset, 'validation': validation_dataset}
     return datasets
 
 def get_spec_dataloaders(CFG, datasets):
-    train_loader = DataLoader(datasets['train'], batch_size=CFG['batch_size'], shuffle=True, num_workers=CFG['dataloader_num_workers'], pin_memory=True)
-    validation_loader = DataLoader(datasets['validation'], batch_size=CFG['batch_size'], shuffle=False, num_workers=CFG['dataloader_num_workers'], pin_memory=True)
+    train_loader = DataLoader(datasets['train'], batch_size=CFG.batch_size, shuffle=True, num_workers=CFG.dataloader_num_workers, pin_memory=True)
+    validation_loader = DataLoader(datasets['validation'], batch_size=CFG.batch_size, shuffle=False, num_workers=CFG.dataloader_num_workers, pin_memory=True)
     dataloaders = {'train': train_loader, 'validation': validation_loader}
     return dataloaders
