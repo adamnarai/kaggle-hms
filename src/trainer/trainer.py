@@ -7,18 +7,18 @@ import numpy as np
 import wandb
 from tqdm import tqdm
 import pandas as pd
-from model.metric import kl_divergence
 from ext.kaggle_kl_div.kaggle_kl_div import score as kaggle_kl_div_score
 
 import torch
 import torch.nn.functional as F
 
 class Trainer:
-    def __init__(self, model, dataloaders, loss_fn, optimizer, scheduler, device, state_filename, metric, num_epochs=10, wandb_log=False):
+    def __init__(self, model, dataloaders, loss_fn, optimizer, scheduler, device, state_filename, metric, num_epochs=10, wandb_log=False, loss_fn_val=None):
         self.model = model
         self.train_dataloader = dataloaders['train']
         self.test_dataloader = dataloaders['validation']
         self.loss_fn = loss_fn
+        self.loss_fn_val = loss_fn_val
         self.optimizer = optimizer
         self.scheduler = scheduler
         self.device = device
@@ -78,7 +78,7 @@ class Trainer:
 
             # Compute prediction error
             pred = self.model(X)
-            loss = self.loss_fn(F.log_softmax(pred, dim=-1), F.softmax(y, dim=-1))
+            loss = self.loss_fn(F.log_softmax(pred, dim=-1), y)
 
             # Backpropagation
             loss.backward()
@@ -105,7 +105,7 @@ class Trainer:
                 X, y = X.to(self.device), y.to(self.device)
 
                 pred = self.model(X)
-                test_loss += self.loss_fn(F.log_softmax(pred, dim=-1), F.softmax(y, dim=-1)).item()
+                test_loss += self.loss_fn(F.log_softmax(pred, dim=-1), y).item()
                 if self.metric == 'balanced_accuracy':
                     with warnings.catch_warnings():
                         warnings.simplefilter('ignore', category=UserWarning)

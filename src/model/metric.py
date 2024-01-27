@@ -3,6 +3,8 @@ import pandas.api.types
 import numpy as np
 
 from typing import Optional
+import torch
+import torch.nn as nn
 
 def kl_divergence(y: pd.DataFrame, y_pred: pd.DataFrame, epsilon: float=10**-15, micro_average: bool=True, sample_weights: Optional[pd.Series]=None):
     # Overwrite y for convenience
@@ -24,3 +26,40 @@ def kl_divergence(y: pd.DataFrame, y_pred: pd.DataFrame, epsilon: float=10**-15,
         y.loc[~y_nonzero_indices, col] = 0
 
     return np.average(y.mean())
+
+class KLDivLossWithLogits(nn.KLDivLoss):
+
+    def __init__(self):
+        super().__init__(reduction="batchmean")
+
+    def forward(self, y, t):
+        y = nn.functional.log_softmax(y,  dim=1)
+        loss = super().forward(y, t)
+
+        return loss
+
+
+class KLDivLossWithLogitsForVal(nn.KLDivLoss):
+    
+    def __init__(self):
+        """"""
+        super().__init__(reduction="batchmean")
+        self.log_prob_list  = []
+        self.label_list = []
+
+    def forward(self, y, t):
+        y = nn.functional.log_softmax(y, dim=1)
+        self.log_prob_list.append(y.numpy())
+        self.label_list.append(t.numpy())
+        
+    def compute(self):
+        log_prob = np.concatenate(self.log_prob_list, axis=0)
+        label = np.concatenate(self.label_list, axis=0)
+        final_metric = super().forward(
+            torch.from_numpy(log_prob),
+            torch.from_numpy(label)
+        ).item()
+        self.log_prob_list = []
+        self.label_list = []
+        
+        return final_metric

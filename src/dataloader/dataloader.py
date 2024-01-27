@@ -5,9 +5,9 @@ import glob
 import random
 
 import torch
-from torch import nn
 from torch.utils.data import Dataset, DataLoader
-from torchvision import transforms
+import albumentations as A
+from albumentations.pytorch import ToTensorV2
 
 class SpecDataset(Dataset):
     """HMS spectrogram dataset dataset."""
@@ -42,29 +42,30 @@ class SpecDataset(Dataset):
         s = np.nanstd(image.flatten())
         image = (image-m)/(s+ep)
         image = np.nan_to_num(image, nan=0.0)
+
+        image = image[..., None]
+        # image = np.concatenate([image, image, image], axis=2)
+        # image = np.concatenate((image[:100, :], image[100:200, :], image[200:300, :], image[300:400, :]), axis=2)
         
         if self.transform:
-            image = self.transform(image)
-
-        # Create 3-channel monochrome image
-        image = torch.cat([image, image, image], dim=0)
+            image = self.transform(image=image)['image']
 
         return image, torch.from_numpy(self.targets[idx])
 
 def get_spec_datasets(CFG, spec_data, df_train, df_validation):
     transform = {
     'train':
-    transforms.Compose([
-        # transforms.Resize((CFG['img_size'], CFG['img_size'])),
+    A.Compose([
+        # A.Resize(height=CFG['img_size'], width=CFG['img_size']),
         # transforms.ColorJitter(**CFG['color_jitter']),
-        transforms.ToTensor(),
+        ToTensorV2(),
         # transforms.Normalize(mean=CFG['img_color_mean'], std=CFG['img_color_std']),
         # transforms.RandomErasing(p=CFG['random_erasing_p'])
     ]),
     'validation':
-     transforms.Compose([
-        # transforms.Resize((CFG['img_size'], CFG['img_size'])),
-        transforms.ToTensor(),
+     A.Compose([
+        # A.Resize(height=CFG['img_size'], width=CFG['img_size']),
+        ToTensorV2(),
         # transforms.Normalize(mean=CFG['img_color_mean'], std=CFG['img_color_std'])
     ])}
     
