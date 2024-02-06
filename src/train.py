@@ -9,7 +9,7 @@ from torch import nn
 import torch.optim as optim
 from sklearn.model_selection import StratifiedGroupKFold
 
-from dataloader import get_spec_dataloaders, get_spec_datasets
+from dataloader import get_dataloaders, get_datasets
 from utils import seed_everything
 from trainer import Trainer
 from model.model import SpecCNN
@@ -22,12 +22,12 @@ train_eeg_dir = os.path.join(data_dir, 'train_eegs')
 train_spectrogram_dir = os.path.join(data_dir, 'train_spectrograms')
 
 
-def train_model(CFG, spec_data, df_train, df_validation, state_filename, validate=True, wandb_log=False):
+def train_model(CFG, data, df_train, df_validation, state_filename, validate=True, wandb_log=False):
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
     # Data loaders
-    datasets = get_spec_datasets(CFG, spec_data, df_train, df_validation)
-    dataloaders = get_spec_dataloaders(CFG, datasets)
+    datasets = get_datasets(CFG, data, df_train, df_validation)
+    dataloaders = get_dataloaders(CFG, datasets)
 
     # Model definition
     model = SpecCNN(model_name=CFG.base_model, num_classes=len(CFG.TARGETS), in_channels=CFG.in_channels).to(device)
@@ -50,14 +50,14 @@ def train_model(CFG, spec_data, df_train, df_validation, state_filename, validat
     
     # Scheduler
     if CFG.scheduler == 'StepLR':
-        scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=CFG.scheduler_step_size, gamma=CFG.lr_gamma, verbose=True)
+        scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=CFG.scheduler_step_size, gamma=CFG.lr_gamma)
     elif CFG.scheduler == 'CyclicLR':
         scheduler = optim.lr_scheduler.CyclicLR(optimizer, base_lr=CFG.base_lr, max_lr=CFG.base_lr*5,
-                                                step_size_up=5, cycle_momentum=False, mode='triangular2', verbose=True)
+                                                step_size_up=5, cycle_momentum=False, mode='triangular2')
     elif CFG.scheduler == 'CosineAnnealingLR':
-        scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=CFG.epochs+CFG.freeze_epochs, verbose=True)
+        scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=CFG.epochs+CFG.freeze_epochs)
     elif CFG.scheduler == 'OneCycleLR':
-        scheduler = optim.lr_scheduler.OneCycleLR(optimizer, max_lr=CFG.base_lr, total_steps=CFG.epochs+CFG.freeze_epochs, verbose=True)
+        scheduler = optim.lr_scheduler.OneCycleLR(optimizer, max_lr=CFG.base_lr, total_steps=CFG.epochs+CFG.freeze_epochs)
 
     # Training
     trainer = Trainer(model, dataloaders, loss_fn, optimizer, scheduler, device, state_filename=state_filename, metric='kl_divergence', wandb_log=wandb_log)
@@ -65,16 +65,28 @@ def train_model(CFG, spec_data, df_train, df_validation, state_filename, validat
     trainer.save_state(state_filename)
     return trainer
 
+# Undersample to N trials
+def sampler(x, n):
+    if len(x) <= n:
+        return x
+    else:
+        return x.sample(n)
+
 def load_data(CFG):
     # Load data
     df = pd.read_csv(os.path.join(data_dir, 'train.csv'))
-    spec_data = np.load(os.path.join(data_dir, 'spec_data.npy'), allow_pickle=True).item()
+    data = dict()
+    data['spec_data'] = np.load(os.path.join(data_dir, 'spec_data.npy'), allow_pickle=True).item()
+    data['eeg_data'] = [] #np.load(os.path.join(data_dir, 'eeg_data.npy'), allow_pickle=True).item()
+    data['eeg_tf_data'] = np.load(os.path.join(data_dir, 'eeg_tf_data.npy'), allow_pickle=True).item()
 
     # Spectrogram trial selection
     if CFG.spec_trial_selection == 'all':
         pass
-    if CFG.spec_trial_selection == 'first':
+    elif CFG.spec_trial_selection == 'first':
         df = df.groupby('spectrogram_id').head(1).reset_index(drop=True)
+    elif CFG.spec_trial_selection == 'random':
+        df = df.groupby('spectrogram_id').apply(lambda x: sampler(x, CFG.spec_random_trial_num)).reset_index(drop=True)
     elif CFG.spec_trial_selection == 'mean_offset':
         train = df.groupby('eeg_id')[['spectrogram_id','spectrogram_label_offset_seconds']].agg(
             {'spectrogram_id':'first','spectrogram_label_offset_seconds':'min'})
@@ -95,10 +107,16 @@ def load_data(CFG):
         train['expert_consensus'] = df.groupby('eeg_id')[['expert_consensus']].agg('first')
         df = train.reset_index(drop=True)
 
+    # EEG trial selection
+    if CFG.eeg_trial_selection == 'all':
+        pass
+    elif CFG.eeg_trial_selection == 'first':
+        df = df.groupby('eeg_id').head(1).reset_index(drop=True)
+
     # Normalize targets
     df[CFG.TARGETS] /= df[CFG.TARGETS].sum(axis=1).values[:, None]
 
-    return df, spec_data
+    return df, data
 
 def train(CFG, tags, notes, train_final_model=False, use_wandb=True, one_fold=False):
     # Wandb
@@ -113,7 +131,7 @@ def train(CFG, tags, notes, train_final_model=False, use_wandb=True, one_fold=Fa
     # Seed
     seed_everything(CFG.seed)
 
-    df, spec_data = load_data(CFG)
+    df, data = load_data(CFG)
 
     skf = StratifiedGroupKFold(n_splits=CFG.cv_fold, random_state=CFG.seed, shuffle=True)
     metric_list = []
@@ -127,7 +145,7 @@ def train(CFG, tags, notes, train_final_model=False, use_wandb=True, one_fold=Fa
             wandb_log = True
         else:
             wandb_log = False
-        trainer = train_model(CFG, spec_data, df_train, df_validation, state_filename, wandb_log=wandb_log)
+        trainer = train_model(CFG, data, df_train, df_validation, state_filename, wandb_log=wandb_log)
         metric_list.append(trainer.best_metric)
         if use_wandb:
             wandb.log({f'kl_div_cv{cv+1}': trainer.best_metric})
@@ -140,6 +158,6 @@ def train(CFG, tags, notes, train_final_model=False, use_wandb=True, one_fold=Fa
     # Final training on all data
     if train_final_model:
         state_filename = os.path.join(results_dir, 'models', f'ubc-ocean-{run.name}.pt')
-        trainer = train_model(CFG, spec_data, df, df, state_filename, validate=False, wandb_log=False)
+        trainer = train_model(CFG, data, df, df, state_filename, validate=False, wandb_log=False)
         if use_wandb:
             wandb.finish()
