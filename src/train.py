@@ -15,7 +15,8 @@ from trainer import Trainer
 from model.model import SpecCNN
 
 # Paths
-root = '/media/latlab/MR/projects/kaggle-hms'
+project_name = 'hms'
+root = f'/media/latlab/MR/projects/kaggle-{project_name}'
 data_dir = os.path.join(root, 'data')
 results_dir = os.path.join(root, 'results')
 train_eeg_dir = os.path.join(data_dir, 'train_eegs')
@@ -123,7 +124,7 @@ def train(CFG, tags, notes, train_final_model=False, use_wandb=True, one_fold=Fa
     if use_wandb:
         wandb.login(key='1b0401db7513303bdea77fb070097f9d2850cf3b')
         cfg_dict = dict((key, value) for key, value in dict(CFG.__dict__).items() if not callable(value) and not key.startswith('__'))
-        run = wandb.init(project='kaggle-hms', config=cfg_dict, tags=tags, notes=notes)
+        run = wandb.init(project=f'kaggle-{project_name}', config=cfg_dict, tags=tags, notes=notes)
     else:
         WandbRun = namedtuple('WandbRun', 'name')
         run = WandbRun('debug')
@@ -140,7 +141,7 @@ def train(CFG, tags, notes, train_final_model=False, use_wandb=True, one_fold=Fa
         df_train = df.iloc[train_index]
         df_validation = df.iloc[valid_index]
         run_name = f'{run.name}-cv{cv+1}'
-        state_filename = os.path.join(results_dir, 'models', f'ubc-ocean-{run_name}.pt')
+        state_filename = os.path.join(results_dir, 'models', f'{project_name}-{run_name}.pt')
         if use_wandb and cv == 0:
             wandb_log = True
         else:
@@ -157,7 +158,7 @@ def train(CFG, tags, notes, train_final_model=False, use_wandb=True, one_fold=Fa
 
     # Final training on all data
     if train_final_model:
-        state_filename = os.path.join(results_dir, 'models', f'ubc-ocean-{run.name}.pt')
+        state_filename = os.path.join(results_dir, 'models', f'{project_name}-{run.name}.pt')
         trainer = train_model(CFG, data, df, df, state_filename, validate=False, wandb_log=False)
         if use_wandb:
             wandb.finish()
