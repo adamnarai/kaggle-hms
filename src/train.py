@@ -79,7 +79,7 @@ def load_data(CFG):
     data = dict()
     data['spec_data'] = np.load(os.path.join(data_dir, 'spec_data.npy'), allow_pickle=True).item()
     data['eeg_data'] = [] #np.load(os.path.join(data_dir, 'eeg_data.npy'), allow_pickle=True).item()
-    data['eeg_tf_data'] = np.load(os.path.join(data_dir, 'eeg_tf_data.npy'), allow_pickle=True).item()
+    data['eeg_tf_data'] = np.load(os.path.join(data_dir, f'{CFG.eeg_tf_fname}.npy'), allow_pickle=True).item()
 
     # Spectrogram trial selection
     if CFG.spec_trial_selection == 'all':
@@ -113,6 +113,8 @@ def load_data(CFG):
         pass
     elif CFG.eeg_trial_selection == 'first':
         df = df.groupby('eeg_id').head(1).reset_index(drop=True)
+    elif CFG.eeg_trial_selection == 'random':
+        df = df.groupby('eeg_id').apply(lambda x: sampler(x, CFG.eeg_random_trial_num)).reset_index(drop=True)
 
     # Normalize targets
     df[CFG.TARGETS] /= df[CFG.TARGETS].sum(axis=1).values[:, None]

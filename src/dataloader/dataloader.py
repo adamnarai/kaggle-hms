@@ -17,6 +17,7 @@ class SpecDataset(Dataset):
         self.df = df
         self.spec_ids = self.df['spectrogram_id'].values
         self.eeg_ids = self.df['eeg_id'].values
+        self.eeg_sub_ids = self.df['eeg_sub_id'].values
         self.targets = self.df[CFG.TARGETS].values
         self.spec_offsets = (self.df['spectrogram_label_offset_seconds'].values // 2).astype(int)
         self.eeg_offsets = self.df['eeg_label_offset_seconds'].values
@@ -53,19 +54,8 @@ class SpecDataset(Dataset):
 
         # Load eeg tf image
         eeg_id = self.eeg_ids[idx]
-        eeg_offset = self.eeg_offsets[idx]
+        eeg_sub_id = self.eeg_sub_ids[idx]
         eeg_tf_image = self.eeg_tf_data[eeg_id]
-
-        # # log transform spectogram
-        # eeg_tf_image = np.clip(eeg_tf_image, np.exp(-4), np.exp(8))
-        # eeg_tf_image = np.log(eeg_tf_image)
-
-        # # standardize per image
-        # ep = 1e-6
-        # m = np.nanmean(eeg_tf_image.flatten())
-        # s = np.nanstd(eeg_tf_image.flatten())
-        # eeg_tf_image = (eeg_tf_image-m)/(s+ep)
-        # eeg_tf_image = np.nan_to_num(eeg_tf_image, nan=0.0)
 
         eeg_tf_image = eeg_tf_image[..., None]
 
@@ -76,9 +66,6 @@ class SpecDataset(Dataset):
             image = eeg_tf_image
         elif self.data_type == 'spec+eeg_tf':
             image = np.concatenate([resize(spec_image, (512, 512)), resize(eeg_tf_image, (512, 512))], axis=2)
-
-        # image = np.concatenate([image, image, image], axis=2)
-        # image = np.concatenate((image[:100, :], image[100:200, :], image[200:300, :], image[300:400, :]), axis=2)
         
         if self.transform:
             image = self.transform(image=image)['image']
@@ -89,8 +76,8 @@ def get_datasets(CFG, data, df_train, df_validation):
     transform = {
     'train':
     A.Compose([
-        A.CoarseDropout(**CFG.coarse_dropout_args),
         A.ColorJitter(**CFG.color_jitter_args),
+        A.CoarseDropout(**CFG.coarse_dropout_args),
         ToTensorV2(),
         # transforms.Normalize(mean=CFG['img_color_mean'], std=CFG['img_color_std']),
         # transforms.RandomErasing(p=CFG['random_erasing_p'])
