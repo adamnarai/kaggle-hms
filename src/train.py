@@ -31,7 +31,7 @@ def train_model(CFG, data, df_train, df_validation, state_filename, validate=Tru
     dataloaders = get_dataloaders(CFG, datasets)
 
     # Model definition
-    model = SpecCNN(model_name=CFG.base_model, num_classes=len(CFG.TARGETS), in_channels=CFG.in_channels).to(device)
+    model = SpecCNN(model_name=CFG.base_model, num_classes=len(CFG.TARGETS), in_channels=CFG.in_channels, pretrained=CFG.pretrained).to(device)
     
     # Loss function
     if CFG.loss == 'CrossEntropyLoss':
@@ -79,7 +79,10 @@ def load_data(CFG):
     data = dict()
     data['spec_data'] = np.load(os.path.join(data_dir, 'spec_data.npy'), allow_pickle=True).item()
     data['eeg_data'] = [] #np.load(os.path.join(data_dir, 'eeg_data.npy'), allow_pickle=True).item()
-    data['eeg_tf_data'] = np.load(os.path.join(data_dir, f'{CFG.eeg_tf_fname}.npy'), allow_pickle=True).item()
+    if os.path.isfile(os.path.join(data_dir, f'{CFG.eeg_tf_data}.npy')):
+        data['eeg_tf_data'] = np.load(os.path.join(data_dir, f'{CFG.eeg_tf_data}.npy'), allow_pickle=True).item()
+    elif os.path.isdir(os.path.join(data_dir, f'{CFG.eeg_tf_data}')):
+        data['eeg_tf_data'] = os.path.join(data_dir, f'{CFG.eeg_tf_data}')
 
     # Spectrogram trial selection
     if CFG.spec_trial_selection == 'all':
@@ -115,6 +118,8 @@ def load_data(CFG):
         df = df.groupby('eeg_id').head(1).reset_index(drop=True)
     elif CFG.eeg_trial_selection == 'random':
         df = df.groupby('eeg_id').apply(lambda x: sampler(x, CFG.eeg_random_trial_num)).reset_index(drop=True)
+    elif CFG.eeg_trial_selection == 'first+last':
+        df = df.groupby('eeg_id').apply(lambda x: pd.concat((x.head(1), x.tail(1))).reset_index(drop=True))
 
     # Normalize targets
     df[CFG.TARGETS] /= df[CFG.TARGETS].sum(axis=1).values[:, None]

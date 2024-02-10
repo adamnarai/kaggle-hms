@@ -55,7 +55,10 @@ class SpecDataset(Dataset):
         # Load eeg tf image
         eeg_id = self.eeg_ids[idx]
         eeg_sub_id = self.eeg_sub_ids[idx]
-        eeg_tf_image = self.eeg_tf_data[eeg_id]
+        if isinstance(self.eeg_tf_data, dict):
+            eeg_tf_image = self.eeg_tf_data[eeg_id]
+        elif os.path.isdir(self.eeg_tf_data):
+            eeg_tf_image = np.load(os.path.join(self.eeg_tf_data, f'{eeg_id}_{eeg_sub_id}.npy'), allow_pickle=True)
 
         eeg_tf_image = eeg_tf_image[..., None]
 
@@ -76,15 +79,16 @@ def get_datasets(CFG, data, df_train, df_validation):
     transform = {
     'train':
     A.Compose([
-        A.ColorJitter(**CFG.color_jitter_args),
+        # A.Resize(height=512, width=512),
         A.CoarseDropout(**CFG.coarse_dropout_args),
+        # A.ColorJitter(**CFG.color_jitter_args),
         ToTensorV2(),
         # transforms.Normalize(mean=CFG['img_color_mean'], std=CFG['img_color_std']),
         # transforms.RandomErasing(p=CFG['random_erasing_p'])
     ]),
     'validation':
      A.Compose([
-        # A.Resize(height=CFG['img_size'], width=CFG['img_size']),
+        # A.Resize(height=512, width=512),
         ToTensorV2(),
         # transforms.Normalize(mean=CFG['img_color_mean'], std=CFG['img_color_std'])
     ])}
