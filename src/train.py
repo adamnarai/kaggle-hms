@@ -154,7 +154,7 @@ def train(CFG):
     best_metric_list = []
     for cv, (df_train, df_validation) in enumerate(splits):
         print(f"Cross-validation fold {cv+1}/{CFG.cv_fold}")
-        state_filename = os.path.join(CFG.results_dir, 'models', model_name, f'{model_name}-cv{cv+1}.pt')
+        state_filename = os.path.join(CFG.models_dir, model_name, f'{model_name}-cv{cv+1}.pt')
         if CFG.use_wandb and cv == 0:
             wandb_log = True
         else:
@@ -174,7 +174,7 @@ def train(CFG):
 
     # Final training on all data
     if CFG.train_full_model:
-        state_filename = os.path.join(CFG.results_dir, 'models', f'{model_name}-full.pt')
+        state_filename = os.path.join(CFG.models_dir, f'{model_name}-full.pt')
         trainer = train_model(CFG, data, df, df, state_filename, validate=False, wandb_log=False)
         if CFG.use_wandb:
             wandb.finish()
