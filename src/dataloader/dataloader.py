@@ -10,7 +10,7 @@ from torch.utils.data import Dataset, DataLoader
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
 
-class SpecDataset(Dataset):
+class HMSDataset(Dataset):
     """HMS spectrogram dataset dataset."""
 
     def __init__(self, CFG, df, data, transform=None):
@@ -32,35 +32,36 @@ class SpecDataset(Dataset):
 
     def __getitem__(self, idx):
         # Load spec image
-        spec_id = self.spec_ids[idx]
-        offset = self.spec_offsets[idx]
-        spec_image = self.spec_data[spec_id]
+        if self.data_type == 'spec' or self.data_type == 'spec+eeg_tf':
+            spec_id = self.spec_ids[idx]
+            offset = self.spec_offsets[idx]
+            spec_image = self.spec_data[spec_id]
 
-        spec_image = spec_image[offset:offset+300, :].T
+            spec_image = spec_image[offset:offset+300, :].T
 
-        # log transform spectogram
-        spec_image = np.clip(spec_image, np.exp(-4), np.exp(8))
-        spec_image = np.log(spec_image)
+            # log transform spectogram
+            spec_image = np.clip(spec_image, np.exp(-4), np.exp(8))
+            spec_image = np.log(spec_image)
 
-        # standardize per image
-        ep = 1e-6
-        m = np.nanmean(spec_image.flatten())
-        s = np.nanstd(spec_image.flatten())
-        spec_image = (spec_image-m)/(s+ep)
-        spec_image = np.nan_to_num(spec_image, nan=0.0)
+            # standardize per image
+            ep = 1e-6
+            m = np.nanmean(spec_image.flatten())
+            s = np.nanstd(spec_image.flatten())
+            spec_image = (spec_image-m)/(s+ep)
+            spec_image = np.nan_to_num(spec_image, nan=0.0)
 
-        spec_image = spec_image[..., None]
-
+            spec_image = spec_image[..., None]
 
         # Load eeg tf image
-        eeg_id = self.eeg_ids[idx]
-        eeg_sub_id = self.eeg_sub_ids[idx]
-        if isinstance(self.eeg_tf_data, dict):
-            eeg_tf_image = self.eeg_tf_data[eeg_id]
-        elif os.path.isdir(self.eeg_tf_data):
-            eeg_tf_image = np.load(os.path.join(self.eeg_tf_data, f'{eeg_id}_{eeg_sub_id}.npy'), allow_pickle=True)
+        if self.data_type == 'eeg_tf' or self.data_type == 'spec':
+            eeg_id = self.eeg_ids[idx]
+            eeg_sub_id = self.eeg_sub_ids[idx]
+            if isinstance(self.eeg_tf_data, dict):
+                eeg_tf_image = self.eeg_tf_data[eeg_id]
+            elif os.path.isdir(self.eeg_tf_data):
+                eeg_tf_image = np.load(os.path.join(self.eeg_tf_data, f'{eeg_id}_{eeg_sub_id}.npy'), allow_pickle=True)
 
-        eeg_tf_image = eeg_tf_image[..., None]
+            eeg_tf_image = eeg_tf_image[..., None]
 
         # Final image
         if self.data_type == 'spec':
@@ -93,11 +94,11 @@ def get_datasets(CFG, data, df_train, df_validation):
         # transforms.Normalize(mean=CFG['img_color_mean'], std=CFG['img_color_std'])
     ])}
     
-    train_dataset = SpecDataset(CFG, 
+    train_dataset = HMSDataset(CFG, 
                                 df=df_train, 
                                 data=data,
                                 transform=transform['train'])
-    validation_dataset = SpecDataset(CFG, 
+    validation_dataset = HMSDataset(CFG, 
                                      df=df_validation, 
                                      data=data,
                                      transform=transform['validation'])

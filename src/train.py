@@ -14,14 +14,6 @@ from utils import seed_everything
 from trainer import Trainer
 from model.model import SpecCNN
 
-# Paths
-project_name = 'hms'
-root = f'/media/latlab/MR/projects/kaggle-{project_name}'
-data_dir = os.path.join(root, 'data')
-results_dir = os.path.join(root, 'results')
-train_eeg_dir = os.path.join(data_dir, 'train_eegs')
-train_spectrogram_dir = os.path.join(data_dir, 'train_spectrograms')
-
 
 def train_model(CFG, data, df_train, df_validation, state_filename, validate=True, wandb_log=False):
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
@@ -74,15 +66,20 @@ def sampler(x, n):
         return x.sample(n)
 
 def load_data(CFG):
-    # Load data
-    df = pd.read_csv(os.path.join(data_dir, 'train.csv'))
+    df = pd.read_csv(os.path.join(CFG.data_dir, 'train.csv'))
     data = dict()
-    data['spec_data'] = np.load(os.path.join(data_dir, 'spec_data.npy'), allow_pickle=True).item()
+    if CFG.data_type == 'spec' or CFG.data_type == 'spec+eeg_tf':
+        data['spec_data'] = np.load(os.path.join(CFG.data_dir, 'spec_data.npy'), allow_pickle=True).item()
+    else:
+        data['spec_data'] = []
+    if CFG.data_type == 'eeg_tf' or CFG.data_type == 'spec+eeg_tf':
+        if os.path.isfile(os.path.join(CFG.data_dir, f'{CFG.eeg_tf_data}.npy')):
+            data['eeg_tf_data'] = np.load(os.path.join(CFG.data_dir, f'{CFG.eeg_tf_data}.npy'), allow_pickle=True).item()
+        elif os.path.isdir(os.path.join(CFG.data_dir, f'{CFG.eeg_tf_data}')):
+            data['eeg_tf_data'] = os.path.join(CFG.data_dir, f'{CFG.eeg_tf_data}')
+    else:
+        data['eeg_tf_data'] = []
     data['eeg_data'] = [] #np.load(os.path.join(data_dir, 'eeg_data.npy'), allow_pickle=True).item()
-    if os.path.isfile(os.path.join(data_dir, f'{CFG.eeg_tf_data}.npy')):
-        data['eeg_tf_data'] = np.load(os.path.join(data_dir, f'{CFG.eeg_tf_data}.npy'), allow_pickle=True).item()
-    elif os.path.isdir(os.path.join(data_dir, f'{CFG.eeg_tf_data}')):
-        data['eeg_tf_data'] = os.path.join(data_dir, f'{CFG.eeg_tf_data}')
 
     # Spectrogram trial selection
     if CFG.spec_trial_selection == 'all':
@@ -91,25 +88,6 @@ def load_data(CFG):
         df = df.groupby('spectrogram_id').head(1).reset_index(drop=True)
     elif CFG.spec_trial_selection == 'random':
         df = df.groupby('spectrogram_id').apply(lambda x: sampler(x, CFG.spec_random_trial_num)).reset_index(drop=True)
-    elif CFG.spec_trial_selection == 'mean_offset':
-        train = df.groupby('eeg_id')[['spectrogram_id','spectrogram_label_offset_seconds']].agg(
-            {'spectrogram_id':'first','spectrogram_label_offset_seconds':'min'})
-        train.columns = ['spectrogram_id','min']
-
-        tmp = df.groupby('eeg_id')[['spectrogram_id','spectrogram_label_offset_seconds']].agg(
-            {'spectrogram_label_offset_seconds':'max'})
-        train['max'] = tmp
-        train['spectrogram_label_offset_seconds'] = (train['min'] + train['max']) // 2
-
-        tmp = df.groupby('eeg_id')[['patient_id']].agg('first')
-        train['patient_id'] = tmp
-
-        tmp = df.groupby('eeg_id')[CFG.TARGETS].agg('sum')
-        for t in CFG.TARGETS:
-            train[t] = tmp[t].values
-
-        train['expert_consensus'] = df.groupby('eeg_id')[['expert_consensus']].agg('first')
-        df = train.reset_index(drop=True)
 
     # EEG trial selection
     if CFG.eeg_trial_selection == 'all':
@@ -126,46 +104,77 @@ def load_data(CFG):
 
     return df, data
 
-def train(CFG, tags, notes, train_final_model=False, use_wandb=True, one_fold=False):
+def init_wandb(CFG):
+    wandb.login(key=CFG.wandb_key)
+    cfg_dict = dict((key, value) for key, value in dict(CFG.__dict__).items() if not callable(value) and not key.startswith('__'))
+    run = wandb.init(project=f'kaggle-{CFG.project_name}', config=cfg_dict, tags=CFG.tags, notes=CFG.notes)
+    return run
+
+def create_cv_splits(CFG, df):
+    skf = StratifiedGroupKFold(n_splits=CFG.cv_fold, random_state=CFG.seed, shuffle=True)
+    splits = []
+    for train_index, valid_index in skf.split(X=np.zeros(len(df)), y=df[CFG.stratif_vars], groups=df[CFG.grouping_vars]):
+        splits.append((df.iloc[train_index].copy(), df.iloc[valid_index].copy()))
+    return splits
+
+def save_splits(CFG, splits, model_name):
+    df = pd.DataFrame()
+    for i, (df_train, df_validation) in enumerate(splits):
+        df_train.loc[:,'split'] = 'train'
+        df_train.loc[:,'fold'] = i + 1
+        df_validation.loc[:,'split'] = 'validation'
+        df_validation.loc[:,'fold'] = i + 1
+        df = pd.concat([df, df_train, df_validation])
+    df = df.sort_values(by=['fold', 'split']).reset_index(drop=True)
+    df.to_csv(os.path.join(CFG.results_dir, 'models', model_name, 'splits.csv'), index=False)
+
+def train(CFG):
     # Wandb
-    if use_wandb:
-        wandb.login(key='1b0401db7513303bdea77fb070097f9d2850cf3b')
-        cfg_dict = dict((key, value) for key, value in dict(CFG.__dict__).items() if not callable(value) and not key.startswith('__'))
-        run = wandb.init(project=f'kaggle-{project_name}', config=cfg_dict, tags=tags, notes=notes)
+    if CFG.use_wandb:
+        run = init_wandb(CFG)
     else:
         WandbRun = namedtuple('WandbRun', 'name')
         run = WandbRun('debug')
 
+    # Create model dir
+    model_name = f'{CFG.project_name}-{run.name}'
+    os.makedirs(os.path.join(CFG.results_dir, 'models', model_name), exist_ok=True)
+
     # Seed
     seed_everything(CFG.seed)
 
+    # Load data
     df, data = load_data(CFG)
 
-    skf = StratifiedGroupKFold(n_splits=CFG.cv_fold, random_state=CFG.seed, shuffle=True)
+    # Cross-validation splicts
+    splits = create_cv_splits(CFG, df)
+    save_splits(CFG, splits, model_name)
+
     metric_list = []
-    for cv, (train_index, valid_index) in enumerate(skf.split(X=np.zeros(len(df['expert_consensus'])), y=df['expert_consensus'], groups=df['patient_id'])):
+    best_metric_list = []
+    for cv, (df_train, df_validation) in enumerate(splits):
         print(f"Cross-validation fold {cv+1}/{CFG.cv_fold}")
-        df_train = df.iloc[train_index]
-        df_validation = df.iloc[valid_index]
-        run_name = f'{run.name}-cv{cv+1}'
-        state_filename = os.path.join(results_dir, 'models', f'{project_name}-{run_name}.pt')
-        if use_wandb and cv == 0:
+        state_filename = os.path.join(CFG.results_dir, 'models', model_name, f'{model_name}-cv{cv+1}.pt')
+        if CFG.use_wandb and cv == 0:
             wandb_log = True
         else:
             wandb_log = False
         trainer = train_model(CFG, data, df_train, df_validation, state_filename, wandb_log=wandb_log)
-        metric_list.append(trainer.best_metric)
-        if use_wandb:
-            wandb.log({f'kl_div_cv{cv+1}': trainer.best_metric})
-        if one_fold:
+        best_metric_list.append(trainer.best_metric)
+        metric_list.append(trainer.metric)
+        if CFG.use_wandb:
+            wandb.log({f'metric_cv{cv+1}': trainer.metric})
+            wandb.log({f'best_metric_cv{cv+1}': trainer.best_metric})
+        if CFG.one_fold:
             break
-    if use_wandb:
-        wandb.log({f'mean_kl_div': np.mean(metric_list)})
+    if CFG.use_wandb:
+        wandb.log({f'mean_metric': np.mean(metric_list)})
+        wandb.log({f'mean_best_metric': np.mean(best_metric_list)})
         wandb.finish()
 
     # Final training on all data
-    if train_final_model:
-        state_filename = os.path.join(results_dir, 'models', f'{project_name}-{run.name}.pt')
+    if CFG.train_full_model:
+        state_filename = os.path.join(CFG.results_dir, 'models', f'{model_name}-full.pt')
         trainer = train_model(CFG, data, df, df, state_filename, validate=False, wandb_log=False)
-        if use_wandb:
+        if CFG.use_wandb:
             wandb.finish()
