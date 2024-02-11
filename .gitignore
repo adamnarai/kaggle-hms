@@ -6,4 +6,4 @@ results
 *.pklz
 wandb
 __pycache__
-
+src/test.ipynb
