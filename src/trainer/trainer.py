@@ -27,6 +27,7 @@ class Trainer:
         self.num_epochs = num_epochs
         self.wandb_log = wandb_log
         self.best_metric = np.inf
+        self.last_metric = np.inf
         self.epoch_count = 0
         self.test_y = []
         self.test_pred = []
@@ -45,6 +46,7 @@ class Trainer:
             train_loss = self.train()
             if validate:
                 test_loss, metric = self.test()
+                self.last_metric = metric
                 if metric < self.best_metric:
                     self.best_metric = metric
                     print(f"New best {self.metric}: {self.best_metric:.4f}\nSaving model to {self.state_filename}")

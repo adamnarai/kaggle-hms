@@ -3,6 +3,7 @@ import numpy as np
 import pandas as pd
 from collections import namedtuple
 import wandb
+import json
 
 import torch
 from torch import nn
@@ -117,7 +118,7 @@ def create_cv_splits(CFG, df):
         splits.append((df.iloc[train_index].copy(), df.iloc[valid_index].copy()))
     return splits
 
-def save_splits(CFG, splits, model_name):
+def save_splits(CFG, splits, model_dir):
     df = pd.DataFrame()
     for i, (df_train, df_validation) in enumerate(splits):
         df_train.loc[:,'split'] = 'train'
@@ -126,7 +127,12 @@ def save_splits(CFG, splits, model_name):
         df_validation.loc[:,'fold'] = i + 1
         df = pd.concat([df, df_train, df_validation])
     df = df.sort_values(by=['fold', 'split']).reset_index(drop=True)
-    df.to_csv(os.path.join(CFG.results_dir, 'models', model_name, 'splits.csv'), index=False)
+    df.to_csv(os.path.join(model_dir, 'splits.csv'), index=False)
+
+def save_config(CFG, model_dir):
+    cfg_dict = dict((key, value) for key, value in dict(CFG.__dict__).items() if not callable(value) and not key.startswith('__'))
+    with open(os.path.join(model_dir, 'config.json'), 'w') as f:
+        json.dump(cfg_dict, f, indent=4)
 
 def train(CFG):
     # Wandb
@@ -138,7 +144,8 @@ def train(CFG):
 
     # Create model dir
     model_name = f'{CFG.project_name}-{run.name}'
-    os.makedirs(os.path.join(CFG.results_dir, 'models', model_name), exist_ok=True)
+    model_dir = os.path.join(CFG.results_dir, 'models', model_name)
+    os.makedirs(model_dir, exist_ok=True)
 
     # Seed
     seed_everything(CFG.seed)
@@ -148,22 +155,25 @@ def train(CFG):
 
     # Cross-validation splicts
     splits = create_cv_splits(CFG, df)
-    save_splits(CFG, splits, model_name)
+    save_splits(CFG, splits, model_dir)
+
+    # Save config
+    save_config(CFG, model_dir)
 
     metric_list = []
     best_metric_list = []
     for cv, (df_train, df_validation) in enumerate(splits):
         print(f"Cross-validation fold {cv+1}/{CFG.cv_fold}")
-        state_filename = os.path.join(CFG.models_dir, model_name, f'{model_name}-cv{cv+1}.pt')
+        state_filename = os.path.join(model_dir, f'{model_name}-cv{cv+1}.pt')
         if CFG.use_wandb and cv == 0:
             wandb_log = True
         else:
             wandb_log = False
         trainer = train_model(CFG, data, df_train, df_validation, state_filename, wandb_log=wandb_log)
         best_metric_list.append(trainer.best_metric)
-        metric_list.append(trainer.metric)
+        metric_list.append(trainer.last_metric)
         if CFG.use_wandb:
-            wandb.log({f'metric_cv{cv+1}': trainer.metric})
+            wandb.log({f'metric_cv{cv+1}': trainer.last_metric})
             wandb.log({f'best_metric_cv{cv+1}': trainer.best_metric})
         if CFG.one_fold:
             break

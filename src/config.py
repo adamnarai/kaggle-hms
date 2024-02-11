@@ -1,4 +1,5 @@
 import os
+import json
 
 class Config():
     project_name = 'hms'
@@ -19,7 +20,7 @@ class Config():
     # Wandb
     use_wandb = True
     wandb_key = '1b0401db7513303bdea77fb070097f9d2850cf3b'
-    tags = ['torch', 'cv', 'best_epoch']
+    tags = ['torch', 'cv', 'v2']
     notes = ''
 
     # Training vars
@@ -30,3 +31,4 @@ class Config():
 
     # Data specific
     TARGETS = ['seizure_vote', 'lpd_vote', 'gpd_vote', 'lrda_vote', 'grda_vote', 'other_vote']
+        
