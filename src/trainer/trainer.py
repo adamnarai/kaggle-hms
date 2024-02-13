@@ -76,11 +76,17 @@ class Trainer:
         self.model.train()
         
         train_loss = 0
-        for X, y in tqdm(self.train_dataloader, total=num_batches):
-            X, y = X.to(self.device), y.to(self.device)
+        for batch in tqdm(self.train_dataloader, total=num_batches):
+            if len(batch) == 2:
+                X, y = batch
+                X, y = X.to(self.device), y.to(self.device)
+                pred = self.model(X)
+            elif len(batch) == 3:
+                X1, X2, y = batch
+                X1, X2, y = X1.to(self.device), X2.to(self.device), y.to(self.device)
+                pred = self.model(X1, X2)
 
             # Compute prediction error
-            pred = self.model(X)
             loss = self.loss_fn(F.log_softmax(pred, dim=-1), y)
 
             # Backpropagation
@@ -104,10 +110,16 @@ class Trainer:
         cumm_pred = []
         cumm_y = []
         with torch.no_grad():
-            for X, y in tqdm(self.test_dataloader, total=num_batches):
-                X, y = X.to(self.device), y.to(self.device)
+            for batch in tqdm(self.test_dataloader, total=num_batches):
+                if len(batch) == 2:
+                    X, y = batch
+                    X, y = X.to(self.device), y.to(self.device)
+                    pred = self.model(X)
+                elif len(batch) == 3:
+                    X1, X2, y = batch
+                    X1, X2, y = X1.to(self.device), X2.to(self.device), y.to(self.device)
+                    pred = self.model(X1, X2)
 
-                pred = self.model(X)
                 test_loss += self.loss_fn(F.log_softmax(pred, dim=-1), y).item()
                 if self.metric == 'balanced_accuracy':
                     with warnings.catch_warnings():

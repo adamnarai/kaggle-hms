@@ -13,7 +13,7 @@ from sklearn.model_selection import StratifiedGroupKFold
 from dataloader import get_dataloaders, get_datasets
 from utils import seed_everything
 from trainer import Trainer
-from model.model import SpecCNN
+from model.model import SpecCNN, SpecTfCNN
 
 
 def train_model(CFG, data, df_train, df_validation, state_filename, validate=True, wandb_log=False):
@@ -24,7 +24,10 @@ def train_model(CFG, data, df_train, df_validation, state_filename, validate=Tru
     dataloaders = get_dataloaders(CFG, datasets)
 
     # Model definition
-    model = SpecCNN(model_name=CFG.base_model, num_classes=len(CFG.TARGETS), in_channels=CFG.in_channels, pretrained=CFG.pretrained).to(device)
+    if CFG.data_type == 'spec+eeg_tf':
+        model = SpecTfCNN(model_name=CFG.base_model, num_classes=len(CFG.TARGETS), pretrained=CFG.pretrained).to(device)
+    else:
+        model = SpecCNN(model_name=CFG.base_model, num_classes=len(CFG.TARGETS), in_channels=CFG.in_channels, pretrained=CFG.pretrained).to(device)
     
     # Loss function
     if CFG.loss == 'CrossEntropyLoss':

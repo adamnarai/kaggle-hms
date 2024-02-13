@@ -53,7 +53,7 @@ class HMSDataset(Dataset):
             spec_image = spec_image[..., None]
 
         # Load eeg tf image
-        if self.data_type == 'eeg_tf' or self.data_type == 'spec':
+        if self.data_type == 'eeg_tf' or self.data_type == 'spec+eeg_tf':
             eeg_id = self.eeg_ids[idx]
             eeg_sub_id = self.eeg_sub_ids[idx]
             if isinstance(self.eeg_tf_data, dict):
@@ -63,13 +63,18 @@ class HMSDataset(Dataset):
 
             eeg_tf_image = eeg_tf_image[..., None]
 
+        # Combination of spec and eeg_tf
+        if self.data_type == 'spec+eeg_tf':
+            if self.transform:
+                spec_image = self.transform(image=spec_image)['image']
+                eeg_tf_image = self.transform(image=eeg_tf_image)['image']
+            return spec_image, eeg_tf_image, torch.from_numpy(self.targets[idx])
+
         # Final image
         if self.data_type == 'spec':
             image = spec_image
         elif self.data_type == 'eeg_tf':
             image = eeg_tf_image
-        elif self.data_type == 'spec+eeg_tf':
-            image = np.concatenate([resize(spec_image, (512, 512)), resize(eeg_tf_image, (512, 512))], axis=2)
         
         if self.transform:
             image = self.transform(image=image)['image']
