@@ -23,7 +23,11 @@ class SpecTfCNN(nn.Module):
         self.num_classes = num_classes
         self.model_spec = timm.create_model(model_name=model_name_spec, pretrained=pretrained, num_classes=128, in_chans=1)
         self.model_eeg_tf = timm.create_model(model_name=model_name_eeg_tf, pretrained=pretrained, num_classes=128, in_chans=1)
-        self.classifier = nn.Linear(256, num_classes)
+        self.classifier = nn.Linear(2*1280, num_classes)
+
+        # Remove classifier head
+        self.model_spec = torch.nn.Sequential(*(list(self.model_spec.children())[:-1]))
+        self.model_eeg_tf = torch.nn.Sequential(*(list(self.model_eeg_tf.children())[:-1]))
     
     def forward(self, x1, x2):
         x = torch.cat((self.model_spec(x1), self.model_eeg_tf(x2)), dim=1)
