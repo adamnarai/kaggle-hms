@@ -62,6 +62,7 @@ class HMSDataset(Dataset):
                 eeg_tf_image = np.load(os.path.join(self.eeg_tf_data, f'{eeg_id}_{eeg_sub_id}.npy'), allow_pickle=True)
 
             eeg_tf_image = eeg_tf_image[..., None]
+            # eeg_tf_image = eeg_tf_image.reshape(-1, eeg_tf_image.shape[1], 19)
 
         # Combination of spec and eeg_tf
         if self.data_type == 'spec+eeg_tf':
@@ -87,6 +88,7 @@ def get_datasets(CFG, data, df_train, df_validation):
     A.Compose([
         # A.Resize(height=512, width=512),
         A.CoarseDropout(**CFG.coarse_dropout_args),
+        A.HorizontalFlip(p=CFG.horizontal_flip_p),
         # A.ColorJitter(**CFG.color_jitter_args),
         ToTensorV2(),
         # transforms.Normalize(mean=CFG['img_color_mean'], std=CFG['img_color_std']),

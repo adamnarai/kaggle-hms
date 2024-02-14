@@ -28,6 +28,7 @@ class Config():
     train_full_model = False
     one_fold = False    # Train for only one fold
     dataloader_num_workers = 8
+    pretrained = True
 
     # Data specific
     TARGETS = ['seizure_vote', 'lpd_vote', 'gpd_vote', 'lrda_vote', 'grda_vote', 'other_vote']
