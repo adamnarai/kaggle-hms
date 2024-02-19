@@ -1,14 +1,12 @@
 import os
-from PIL import Image
 import numpy as np
-import glob
 import random
-from skimage.transform import resize
 
 import torch
+from torch import nn
 from torch.utils.data import Dataset, DataLoader
-import albumentations as A
-from albumentations.pytorch import ToTensorV2
+from torchvision.transforms import v2
+import torchvision.transforms.functional as F
 
 class HMSDataset(Dataset):
     """HMS spectrogram dataset dataset."""
@@ -62,13 +60,16 @@ class HMSDataset(Dataset):
                 eeg_tf_image = np.load(os.path.join(self.eeg_tf_data, f'{eeg_id}_{eeg_sub_id}.npy'), allow_pickle=True)
 
             eeg_tf_image = eeg_tf_image[..., None]
-            # eeg_tf_image = eeg_tf_image.reshape(-1, eeg_tf_image.shape[1], 19)
+
+            # # Make it 3 channel
+            # eeg_tf_image = np.repeat(eeg_tf_image, 3, axis =-1)
+
 
         # Combination of spec and eeg_tf
         if self.data_type == 'spec+eeg_tf':
             if self.transform:
-                spec_image = self.transform(image=spec_image)['image']
-                eeg_tf_image = self.transform(image=eeg_tf_image)['image']
+                spec_image = self.transform(spec_image)
+                eeg_tf_image = self.transform(eeg_tf_image)
             return spec_image, eeg_tf_image, torch.from_numpy(self.targets[idx])
 
         # Final image
@@ -78,27 +79,82 @@ class HMSDataset(Dataset):
             image = eeg_tf_image
         
         if self.transform:
-            image = self.transform(image=image)['image']
+            image = self.transform(image)
 
         return image, torch.from_numpy(self.targets[idx])
+    
+class RandomChErease(object):
+    def __init__(self, eeg_ch_num, drop_ch_num=1, fill_value=0, p=0.5):
+        self.eeg_ch_num = eeg_ch_num
+        self.drop_ch_num = drop_ch_num
+        self.fill_value = fill_value
+        self.p = p
+
+    def __call__(self, image):
+        if self.p == 0.0 or random.random() >= self.p:
+            return image
+        
+        ch_size = image.shape[1] // self.eeg_ch_num
+        ch_idx_list = random.sample(range(self.eeg_ch_num), self.drop_ch_num)
+        for ch_idx in ch_idx_list:
+            image[:, (ch_idx*ch_size):((ch_idx+1)*ch_size), :] = self.fill_value
+        return image
+    
+class RandomTimeMasking(object):
+    def __init__(self, width_prop, erase_num=1, fill_value=0, p=0.5):
+        self.width_prop = width_prop
+        self.erase_num = erase_num
+        self.fill_value = fill_value
+        self.p = p
+
+    def __call__(self, image):
+        if self.p == 0.0 or random.random() >= self.p:
+            return image
+        
+        width = int(image.shape[2] * self.width_prop)
+        for _ in range(self.erase_num):
+            time_start = random.randint(0, image.shape[2] - width)
+            image[..., time_start:(time_start+width)] = self.fill_value
+        return image
+    
+class RandomFrequencyMasking(object):
+    def __init__(self, bandwidth_prop, eeg_ch_num, erase_num=1, fill_value=0, p=0.5):
+        self.bandwidth_prop = bandwidth_prop
+        self.eeg_ch_num = eeg_ch_num
+        self.erase_num = erase_num
+        self.fill_value = fill_value
+        self.p = p
+
+    def __call__(self, image):
+        if self.p == 0.0 or random.random() >= self.p:
+            return image
+        
+        ch_size = image.shape[1] // self.eeg_ch_num
+        bandwidth = int(ch_size * self.bandwidth_prop)
+        for _ in range(self.erase_num):
+            freq_start = random.randint(0, ch_size - bandwidth)
+            for ch_idx in range(self.eeg_ch_num):
+                image[:, (ch_idx*ch_size+freq_start):(ch_idx*ch_size+freq_start+bandwidth), :] = self.fill_value
+        return image
 
 def get_datasets(CFG, data, df_train, df_validation):
     transform = {
     'train':
-    A.Compose([
-        # A.Resize(height=512, width=512),
-        A.CoarseDropout(**CFG.coarse_dropout_args),
-        A.HorizontalFlip(p=CFG.horizontal_flip_p),
-        # A.ColorJitter(**CFG.color_jitter_args),
-        ToTensorV2(),
-        # transforms.Normalize(mean=CFG['img_color_mean'], std=CFG['img_color_std']),
-        # transforms.RandomErasing(p=CFG['random_erasing_p'])
+    v2.Compose([
+        v2.ToImage(),
+        # v2.Resize(height=56, width=500),
+        # v2.RandomApply(nn.ModuleList([v2.GaussianBlur(**CFG.gaussian_blur_args)]), p=CFG.gaussian_blur_p),
+        RandomChErease(**CFG.random_ch_erease_args),
+        RandomTimeMasking(**CFG.random_time_masking_args),
+        RandomFrequencyMasking(**CFG.random_frequency_masking_args),
+        # v2.RandomErasing(**CFG.random_erasing_args),
+        v2.ToDtype(torch.float32, scale=True),
     ]),
     'validation':
-     A.Compose([
-        # A.Resize(height=512, width=512),
-        ToTensorV2(),
-        # transforms.Normalize(mean=CFG['img_color_mean'], std=CFG['img_color_std'])
+     v2.Compose([
+        v2.ToImage(),
+        # v2.Resize(height=512, width=512),
+        v2.ToDtype(torch.float32, scale=True)
     ])}
     
     train_dataset = HMSDataset(CFG, 
