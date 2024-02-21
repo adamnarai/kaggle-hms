@@ -130,34 +130,23 @@ class Trainer:
                         warnings.simplefilter('ignore', category=UserWarning)
                         metric += accuracy_score(y.cpu().numpy(), pred.cpu().numpy())
                 elif self.metric == 'kl_divergence':
-                    # pred_df = pd.DataFrame(F.softmax(pred, dim=-1).cpu().numpy())
-                    # pred_df['id'] = np.arange(len(pred_df))
-                    # y_df = pd.DataFrame(y.cpu().numpy())
-                    # y_df['id'] = np.arange(len(y_df))
-                    # metric += kaggle_kl_div_score(submission=pred_df, solution=y_df, row_id_column_name='id')
-
                     cumm_pred.append(F.softmax(pred, dim=-1).cpu().numpy())
                     cumm_y.append(y.cpu().numpy())
                 else:
                     raise NotImplementedError(f"Metric {self.metric} not implemented")
-                test_y.append(y.cpu().numpy())
-                test_pred.append(F.softmax(pred, dim=-1).cpu().numpy())
 
         test_loss /= num_batches
-        metric /= num_batches
 
-        cumm_pred = np.concatenate(cumm_pred)
-        cumm_pred_df = pd.DataFrame(cumm_pred)
-        cumm_pred_df['id'] = np.arange(len(cumm_pred_df))
-
-        cumm_y = np.concatenate(cumm_y)
-        cumm_y_df = pd.DataFrame(cumm_y)
-        cumm_y_df['id'] = np.arange(len(cumm_y_df))
-
-        metric = kaggle_kl_div_score(submission=cumm_pred_df, solution=cumm_y_df, row_id_column_name='id')
-
-        self.test_y = np.concatenate(test_y)
-        self.test_pred = np.concatenate(test_pred)
+        if self.metric == 'kl_divergence':
+            cumm_pred = np.concatenate(cumm_pred)
+            cumm_pred_df = pd.DataFrame(cumm_pred)
+            cumm_pred_df['id'] = np.arange(len(cumm_pred_df))
+            cumm_y = np.concatenate(cumm_y)
+            cumm_y_df = pd.DataFrame(cumm_y)
+            cumm_y_df['id'] = np.arange(len(cumm_y_df))
+            metric = kaggle_kl_div_score(submission=cumm_pred_df, solution=cumm_y_df, row_id_column_name='id')
+        else:
+            metric /= num_batches
 
         return test_loss, metric
     

@@ -7,6 +7,9 @@ from torch import nn
 from torch.utils.data import Dataset, DataLoader
 from torchvision.transforms import v2
 import torchvision.transforms.functional as F
+from torch.utils.data import default_collate
+import albumentations as A
+from albumentations.pytorch import ToTensorV2
 
 class HMSDataset(Dataset):
     """HMS spectrogram dataset dataset."""
@@ -68,8 +71,8 @@ class HMSDataset(Dataset):
         # Combination of spec and eeg_tf
         if self.data_type == 'spec+eeg_tf':
             if self.transform:
-                spec_image = self.transform(spec_image)
-                eeg_tf_image = self.transform(eeg_tf_image)
+                spec_image = self.transform(image=spec_image)['image']
+                eeg_tf_image = self.transform(image=eeg_tf_image)['image']
             return spec_image, eeg_tf_image, torch.from_numpy(self.targets[idx])
 
         # Final image
@@ -79,82 +82,20 @@ class HMSDataset(Dataset):
             image = eeg_tf_image
         
         if self.transform:
-            image = self.transform(image)
+            image = self.transform(image=image)['image']
 
         return image, torch.from_numpy(self.targets[idx])
-    
-class RandomChErease(object):
-    def __init__(self, eeg_ch_num, drop_ch_num=1, fill_value=0, p=0.5):
-        self.eeg_ch_num = eeg_ch_num
-        self.drop_ch_num = drop_ch_num
-        self.fill_value = fill_value
-        self.p = p
-
-    def __call__(self, image):
-        if self.p == 0.0 or random.random() >= self.p:
-            return image
-        
-        ch_size = image.shape[1] // self.eeg_ch_num
-        ch_idx_list = random.sample(range(self.eeg_ch_num), self.drop_ch_num)
-        for ch_idx in ch_idx_list:
-            image[:, (ch_idx*ch_size):((ch_idx+1)*ch_size), :] = self.fill_value
-        return image
-    
-class RandomTimeMasking(object):
-    def __init__(self, width_prop, erase_num=1, fill_value=0, p=0.5):
-        self.width_prop = width_prop
-        self.erase_num = erase_num
-        self.fill_value = fill_value
-        self.p = p
-
-    def __call__(self, image):
-        if self.p == 0.0 or random.random() >= self.p:
-            return image
-        
-        width = int(image.shape[2] * self.width_prop)
-        for _ in range(self.erase_num):
-            time_start = random.randint(0, image.shape[2] - width)
-            image[..., time_start:(time_start+width)] = self.fill_value
-        return image
-    
-class RandomFrequencyMasking(object):
-    def __init__(self, bandwidth_prop, eeg_ch_num, erase_num=1, fill_value=0, p=0.5):
-        self.bandwidth_prop = bandwidth_prop
-        self.eeg_ch_num = eeg_ch_num
-        self.erase_num = erase_num
-        self.fill_value = fill_value
-        self.p = p
-
-    def __call__(self, image):
-        if self.p == 0.0 or random.random() >= self.p:
-            return image
-        
-        ch_size = image.shape[1] // self.eeg_ch_num
-        bandwidth = int(ch_size * self.bandwidth_prop)
-        for _ in range(self.erase_num):
-            freq_start = random.randint(0, ch_size - bandwidth)
-            for ch_idx in range(self.eeg_ch_num):
-                image[:, (ch_idx*ch_size+freq_start):(ch_idx*ch_size+freq_start+bandwidth), :] = self.fill_value
-        return image
 
 def get_datasets(CFG, data, df_train, df_validation):
     transform = {
     'train':
-    v2.Compose([
-        v2.ToImage(),
-        # v2.Resize(height=56, width=500),
-        # v2.RandomApply(nn.ModuleList([v2.GaussianBlur(**CFG.gaussian_blur_args)]), p=CFG.gaussian_blur_p),
-        RandomChErease(**CFG.random_ch_erease_args),
-        RandomTimeMasking(**CFG.random_time_masking_args),
-        RandomFrequencyMasking(**CFG.random_frequency_masking_args),
-        # v2.RandomErasing(**CFG.random_erasing_args),
-        v2.ToDtype(torch.float32, scale=True),
+    A.Compose([
+        A.XYMasking(**CFG.xy_masking_args),
+        ToTensorV2(),
     ]),
     'validation':
-     v2.Compose([
-        v2.ToImage(),
-        # v2.Resize(height=512, width=512),
-        v2.ToDtype(torch.float32, scale=True)
+     A.Compose([
+        ToTensorV2()
     ])}
     
     train_dataset = HMSDataset(CFG, 
@@ -168,8 +109,49 @@ def get_datasets(CFG, data, df_train, df_validation):
     datasets = {'train': train_dataset, 'validation': validation_dataset}
     return datasets
 
+from torch.utils._pytree import tree_flatten, tree_unflatten
+class MixUpOneHot(v2.MixUp):
+    def forward(self, *inputs):
+        inputs = inputs if len(inputs) > 1 else inputs[0]
+        flat_inputs, spec = tree_flatten(inputs)
+        needs_transform_list = self._needs_transform_list(flat_inputs)
+
+        labels = self._labels_getter(inputs)
+        if not isinstance(labels, torch.Tensor):
+            raise ValueError(f"The labels must be a tensor, but got {type(labels)} instead.")
+
+        params = {
+            "labels": labels,
+            "batch_size": labels.shape[0],
+            **self._get_params(
+                [inpt for (inpt, needs_transform) in zip(flat_inputs, needs_transform_list) if needs_transform]
+            ),
+        }
+
+        # By default, the labels will be False inside needs_transform_list, since they are a torch.Tensor coming
+        # after an image or video. However, we need to handle them in _transform, so we make sure to set them to True
+        needs_transform_list[next(idx for idx, inpt in enumerate(flat_inputs) if inpt is labels)] = True
+        flat_outputs = [
+            self._transform(inpt, params) if needs_transform else inpt
+            for (inpt, needs_transform) in zip(flat_inputs, needs_transform_list)
+        ]
+
+        return tree_unflatten(flat_outputs, spec)
+ 
+    def _mixup_label(self, label: torch.Tensor, *, lam: float) -> torch.Tensor:
+        if not label.dtype.is_floating_point:
+            label = label.float()
+        return label.roll(1, 0).mul_(1.0 - lam).add_(label.mul(lam))
+    
 def get_dataloaders(CFG, datasets):
-    train_loader = DataLoader(datasets['train'], batch_size=CFG.batch_size, shuffle=True, num_workers=CFG.dataloader_num_workers, pin_memory=True)
-    validation_loader = DataLoader(datasets['validation'], batch_size=CFG.batch_size, shuffle=False, num_workers=CFG.dataloader_num_workers, pin_memory=True)
+    if CFG.use_mixup:
+        mixup = MixUpOneHot(alpha=CFG.mixup_alpha, num_classes=CFG.num_classes)
+        def collate_fn(batch):
+            return mixup(*default_collate(batch))
+        train_loader = DataLoader(datasets['train'], batch_size=CFG.batch_size, shuffle=True, num_workers=CFG.dataloader_num_workers, collate_fn=collate_fn, pin_memory=True)
+        validation_loader = DataLoader(datasets['validation'], batch_size=CFG.batch_size, shuffle=False, num_workers=CFG.dataloader_num_workers, pin_memory=True)
+    else:
+        train_loader = DataLoader(datasets['train'], batch_size=CFG.batch_size, shuffle=True, num_workers=CFG.dataloader_num_workers, pin_memory=True)
+        validation_loader = DataLoader(datasets['validation'], batch_size=CFG.batch_size, shuffle=False, num_workers=CFG.dataloader_num_workers, pin_memory=True)
     dataloaders = {'train': train_loader, 'validation': validation_loader}
     return dataloaders

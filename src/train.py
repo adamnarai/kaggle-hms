@@ -104,6 +104,7 @@ def load_data(CFG):
         df = df.groupby('eeg_id').apply(lambda x: pd.concat((x.head(1), x.tail(1))).reset_index(drop=True))
 
     # Normalize targets
+    df['rater_num'] = df[CFG.TARGETS].sum(axis=1)
     df[CFG.TARGETS] /= df[CFG.TARGETS].sum(axis=1).values[:, None]
 
     return df, data
