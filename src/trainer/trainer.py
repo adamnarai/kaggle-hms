@@ -160,3 +160,7 @@ class Trainer:
     
     def get_model(self):
         return self.model
+    
+    def set_dataloaders(self, dataloaders):
+        self.train_dataloader = dataloaders['train']
+        self.test_dataloader = dataloaders['validation']

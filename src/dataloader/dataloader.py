@@ -1,6 +1,7 @@
 import os
 import numpy as np
 import random
+from functools import partial
 
 import torch
 from torch import nn
@@ -86,26 +87,44 @@ class HMSDataset(Dataset):
 
         return image, torch.from_numpy(self.targets[idx])
 
+def time_crop_mask(image, fill_value=0, max_trim=100, **kwargs):
+    trim_samples = random.randint(0, max_trim)
+    image[:, :trim_samples, :] = fill_value
+    image[:, -trim_samples:, :] = fill_value
+    return image
+
+def ch_vertical_flip(image, ch_num=19, p=0.5, **kwargs):
+    freq_samples = image.shape[0] // ch_num
+    for i in range(ch_num):
+        if random.random() < p:
+            image[(i-1)*freq_samples:i*freq_samples, ...] = np.flip(image[(i-1)*freq_samples:i*freq_samples, ...], axis=0)
+    return image
+
 def get_datasets(CFG, data, df_train, df_validation):
     transform = {
     'train':
     A.Compose([
-        A.XYMasking(**CFG.xy_masking_args),
-        ToTensorV2(),
+        # A.RingingOvershoot(**CFG.ringing_overshoot_args),
+        # A.MedianBlur(**CFG.median_blur_args),
+        # A.Sharpen(**CFG.sharpen_args),
+        # A.XYMasking(**CFG.xy_masking_args),
+        # A.RandomGamma(),
+        # A.MultiplicativeNoise(),
+        # A.RandomBrightnessContrast(),
+        # A.PixelDropout(drop_value=0.5),
+        # A.VerticalFlip(p=CFG.vertical_flip_p),
+        # A.Lambda(image=partial(ch_vertical_flip, **CFG.ch_vertical_flip_args)),
+        A.CoarseDropout(**CFG.coarse_dropout_args),
+        # A.Lambda(image=partial(time_crop_mask, **CFG.time_crop_args), p=CFG.time_crop_p),
+        ToTensorV2()
     ]),
     'validation':
      A.Compose([
         ToTensorV2()
     ])}
     
-    train_dataset = HMSDataset(CFG, 
-                                df=df_train, 
-                                data=data,
-                                transform=transform['train'])
-    validation_dataset = HMSDataset(CFG, 
-                                     df=df_validation, 
-                                     data=data,
-                                     transform=transform['validation'])
+    train_dataset = HMSDataset(CFG, df=df_train, data=data, transform=transform['train'])
+    validation_dataset = HMSDataset(CFG, df=df_validation, data=data, transform=transform['validation'])
     datasets = {'train': train_dataset, 'validation': validation_dataset}
     return datasets
 

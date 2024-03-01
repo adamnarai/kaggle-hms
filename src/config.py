@@ -14,7 +14,7 @@ class Config():
     models_dir = os.path.join(results_dir, 'models')
 
     # Table vars
-    stratif_vars = ['expert_consensus']
+    stratif_vars = ['expert_consensus', 'rater_group']
     grouping_vars = ['patient_id']
 
     # Wandb
@@ -29,6 +29,7 @@ class Config():
     one_fold = False    # Train for only one fold
     dataloader_num_workers = 8
     pretrained = True
+    train_type = 'normal'
 
     # Data specific
     TARGETS = ['seizure_vote', 'lpd_vote', 'gpd_vote', 'lrda_vote', 'grda_vote', 'other_vote']

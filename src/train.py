@@ -15,37 +15,25 @@ from utils import seed_everything
 from trainer import Trainer
 from model.model import SpecCNN, SpecTfCNN
 
-
-def train_model(CFG, data, df_train, df_validation, state_filename, validate=True, wandb_log=False):
-    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-
-    # Data loaders
-    datasets = get_datasets(CFG, data, df_train, df_validation)
-    dataloaders = get_dataloaders(CFG, datasets)
-
-    # Model definition
-    if CFG.data_type == 'spec+eeg_tf':
-        model = SpecTfCNN(model_name=CFG.base_model, num_classes=len(CFG.TARGETS), pretrained=CFG.pretrained).to(device)
-    else:
-        model = SpecCNN(model_name=CFG.base_model, num_classes=len(CFG.TARGETS), in_channels=CFG.in_channels, pretrained=CFG.pretrained).to(device)
-    
-    # Loss function
+def get_loss_fn(CFG):
     if CFG.loss == 'CrossEntropyLoss':
         loss_fn = nn.CrossEntropyLoss(label_smoothing=CFG.label_smoothing)
     elif CFG.loss == 'BCEWithLogitsLoss':
         loss_fn = nn.BCEWithLogitsLoss()
     elif CFG.loss == 'KLDivLoss':
         loss_fn = nn.KLDivLoss(reduction='batchmean')
+    return loss_fn
 
-    # Optimizer
+def get_optimizer(model, CFG):
     if CFG.optimizer == 'SGD':
         optimizer = optim.SGD(model.parameters(), lr=CFG.base_lr, momentum=CFG.sgd_momentum)
     elif CFG.optimizer == 'AdamW':
         optimizer = optim.AdamW(model.parameters(), lr=CFG.base_lr)
     elif CFG.optimizer == 'Adam':
         optimizer = optim.Adam(model.parameters(), lr=CFG.base_lr)
-    
-    # Scheduler
+    return optimizer
+
+def get_scheduler(optimizer, CFG):
     if CFG.scheduler == 'StepLR':
         scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=CFG.scheduler_step_size, gamma=CFG.lr_gamma)
     elif CFG.scheduler == 'CyclicLR':
@@ -55,11 +43,48 @@ def train_model(CFG, data, df_train, df_validation, state_filename, validate=Tru
         scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=CFG.epochs+CFG.freeze_epochs)
     elif CFG.scheduler == 'OneCycleLR':
         scheduler = optim.lr_scheduler.OneCycleLR(optimizer, max_lr=CFG.base_lr, total_steps=CFG.epochs+CFG.freeze_epochs)
+    return scheduler
 
-    # Training
-    trainer = Trainer(model, dataloaders, loss_fn, optimizer, scheduler, device, state_filename=state_filename, metric='kl_divergence', wandb_log=wandb_log)
-    trainer.train_epochs(num_epochs=CFG.epochs, validate=validate)
-    trainer.save_state(state_filename)
+def train_model(CFG, data, df_train, df_validation, state_filename, validate=True, wandb_log=False):
+    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+
+    # Model definition
+    if CFG.data_type == 'spec+eeg_tf':
+        model = SpecTfCNN(model_name=CFG.base_model, num_classes=len(CFG.TARGETS), pretrained=CFG.pretrained).to(device)
+    else:
+        model = SpecCNN(model_name=CFG.base_model, num_classes=len(CFG.TARGETS), in_channels=CFG.in_channels, pretrained=CFG.pretrained).to(device)
+    
+    # Loss function / Optimizer / Scheduler
+    loss_fn = get_loss_fn(CFG)
+    optimizer = get_optimizer(model, CFG)
+    scheduler = get_scheduler(optimizer, CFG)
+
+    if CFG.train_type == 'rater_num_split':
+        # Data loaders
+        dataloaders_init = get_dataloaders(CFG, get_datasets(CFG, data, df_train[df_train['rater_group']=='low'], df_validation))
+        dataloaders = get_dataloaders(CFG, get_datasets(CFG, data, df_train[df_train['rater_group']=='high'], df_validation))
+
+        # Training
+        trainer = Trainer(model, dataloaders_init, loss_fn, optimizer, scheduler, device, state_filename=state_filename, metric='kl_divergence', wandb_log=wandb_log)
+        trainer.train_epochs(num_epochs=CFG.init_epochs, validate=validate)
+
+        trainer.set_dataloaders(dataloaders)
+        optimizer = get_optimizer(trainer.get_model(), CFG)
+        scheduler = get_scheduler(optimizer, CFG)
+        trainer.optimizer = optimizer
+        trainer.scheduler = scheduler
+        trainer.train_epochs(num_epochs=CFG.epochs-CFG.init_epochs, validate=validate)
+
+        trainer.save_state(state_filename)
+    elif CFG.train_type == 'normal':
+        # Data loaders
+        datasets = get_datasets(CFG, data, df_train, df_validation)
+        dataloaders = get_dataloaders(CFG, datasets)
+
+        # Training
+        trainer = Trainer(model, dataloaders, loss_fn, optimizer, scheduler, device, state_filename=state_filename, metric='kl_divergence', wandb_log=wandb_log)
+        trainer.train_epochs(num_epochs=CFG.epochs, validate=validate)
+        trainer.save_state(state_filename)
     return trainer
 
 # Undersample to N trials
@@ -83,7 +108,10 @@ def load_data(CFG):
             data['eeg_tf_data'] = os.path.join(CFG.data_dir, f'{CFG.eeg_tf_data}')
     else:
         data['eeg_tf_data'] = []
-    data['eeg_data'] = [] #np.load(os.path.join(data_dir, 'eeg_data.npy'), allow_pickle=True).item()
+    if CFG.data_type == 'eeg':
+        data['eeg_data'] = np.load(os.path.join(CFG.data_dir, 'eeg_data.npy'), allow_pickle=True).item()
+    else:
+        data['eeg_data'] = []
 
     # Spectrogram trial selection
     if CFG.spec_trial_selection == 'all':
@@ -105,6 +133,7 @@ def load_data(CFG):
 
     # Normalize targets
     df['rater_num'] = df[CFG.TARGETS].sum(axis=1)
+    df['rater_group'] = df['rater_num'].apply(lambda x: 'high' if x > 8 else 'low')
     df[CFG.TARGETS] /= df[CFG.TARGETS].sum(axis=1).values[:, None]
 
     return df, data
@@ -118,7 +147,8 @@ def init_wandb(CFG):
 def create_cv_splits(CFG, df):
     skf = StratifiedGroupKFold(n_splits=CFG.cv_fold, random_state=CFG.seed, shuffle=True)
     splits = []
-    for train_index, valid_index in skf.split(X=np.zeros(len(df)), y=df[CFG.stratif_vars], groups=df[CFG.grouping_vars]):
+    y = df[CFG.stratif_vars].sum(axis=1)
+    for train_index, valid_index in skf.split(X=np.zeros(len(df)), y=y, groups=df[CFG.grouping_vars]):
         splits.append((df.iloc[train_index].copy(), df.iloc[valid_index].copy()))
     return splits
 
@@ -157,7 +187,7 @@ def train(CFG):
     # Load data
     df, data = load_data(CFG)
 
-    # Cross-validation splicts
+    # Cross-validation splits
     splits = create_cv_splits(CFG, df)
     save_splits(CFG, splits, model_dir)
 
