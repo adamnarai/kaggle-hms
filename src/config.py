@@ -4,6 +4,7 @@ import json
 class Config():
     project_name = 'hms'
     seed = 42
+    debug = False
 
     # Paths
     root = f'/media/latlab/MR/projects/kaggle-{project_name}'
@@ -30,8 +31,15 @@ class Config():
     dataloader_num_workers = 8
     pretrained = True
     train_type = 'normal'
+    deterministic = False # torch.backends.cudnn.deterministic
+    benchmark = False     # torch.backends.cudnn.benchmark
+    pin_memory = True
 
     # Data specific
     TARGETS = ['seizure_vote', 'lpd_vote', 'gpd_vote', 'lrda_vote', 'grda_vote', 'other_vote']
     num_classes = len(TARGETS)
+    ch_list = ['Fp1', 'F3', 'C3', 'P3', 'F7', 'T3', 'T5', 'O1', 'Fz', 'Cz', 'Pz', 'Fp2', 'F4', 'C4', 'P4', 'F8', 'T4', 'T6', 'O2', 'EKG']
+    ch_pairs = [('Fp1', 'F7'), ('F7', 'T3'), ('T3', 'T5'), ('T5', 'O1'), ('Fp2', 'F8'), ('F8', 'T4'), ('T4', 'T6'), ('T6', 'O2'), ('Fp1', 'F3'), 
+                ('F3', 'C3'), ('C3', 'P3'), ('P3', 'O1'), ('Fp2', 'F4'), ('F4', 'C4'), ('C4', 'P4'), ('P4', 'O2'), ('Fz', 'Cz'), ('Cz', 'Pz')]
+    
         

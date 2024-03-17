@@ -79,11 +79,11 @@ class Trainer:
         for batch in tqdm(self.train_dataloader, total=num_batches):
             if len(batch) == 2:
                 X, y = batch
-                X, y = X.to(self.device), y.to(self.device)
+                X, y = X.to(self.device, non_blocking=True), y.to(self.device, non_blocking=True)
                 pred = self.model(X)
             elif len(batch) == 3:
                 X1, X2, y = batch
-                X1, X2, y = X1.to(self.device), X2.to(self.device), y.to(self.device)
+                X1, X2, y = X1.to(self.device, non_blocking=True), X2.to(self.device, non_blocking=True), y.to(self.device, non_blocking=True)
                 pred = self.model(X1, X2)
 
             # Compute prediction error
@@ -113,11 +113,11 @@ class Trainer:
             for batch in tqdm(self.test_dataloader, total=num_batches):
                 if len(batch) == 2:
                     X, y = batch
-                    X, y = X.to(self.device), y.to(self.device)
+                    X, y = X.to(self.device, non_blocking=True), y.to(self.device, non_blocking=True)
                     pred = self.model(X)
                 elif len(batch) == 3:
                     X1, X2, y = batch
-                    X1, X2, y = X1.to(self.device), X2.to(self.device), y.to(self.device)
+                    X1, X2, y = X1.to(self.device, non_blocking=True), X2.to(self.device, non_blocking=True), y.to(self.device, non_blocking=True)
                     pred = self.model(X1, X2)
 
                 test_loss += self.loss_fn(F.log_softmax(pred, dim=-1), y).item()
@@ -156,7 +156,9 @@ class Trainer:
     
     def load_state(self, filename):
         self.model.load_state_dict(torch.load(filename))
-        return
+    
+    def load_best_state(self):
+        self.load_state(self.state_filename.replace('.pt', '_best.pt'))
     
     def get_model(self):
         return self.model

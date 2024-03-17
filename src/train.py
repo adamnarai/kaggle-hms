@@ -13,7 +13,7 @@ from sklearn.model_selection import StratifiedGroupKFold
 from dataloader import get_dataloaders, get_datasets
 from utils import seed_everything
 from trainer import Trainer
-from model.model import SpecCNN, SpecTfCNN
+from model.model import SpecCNN, SpecTfCNN, WaveNetCustom
 
 def get_loss_fn(CFG):
     if CFG.loss == 'CrossEntropyLoss':
@@ -51,6 +51,8 @@ def train_model(CFG, data, df_train, df_validation, state_filename, validate=Tru
     # Model definition
     if CFG.data_type == 'spec+eeg_tf':
         model = SpecTfCNN(model_name=CFG.base_model, num_classes=len(CFG.TARGETS), pretrained=CFG.pretrained).to(device)
+    elif CFG.data_type == 'eeg':
+        model = WaveNetCustom(eeg_ch=CFG.eeg_ch).to(device)
     else:
         model = SpecCNN(model_name=CFG.base_model, num_classes=len(CFG.TARGETS), in_channels=CFG.in_channels, pretrained=CFG.pretrained).to(device)
     
@@ -61,8 +63,8 @@ def train_model(CFG, data, df_train, df_validation, state_filename, validate=Tru
 
     if CFG.train_type == 'rater_num_split':
         # Data loaders
-        dataloaders_init = get_dataloaders(CFG, get_datasets(CFG, data, df_train[df_train['rater_group']=='low'], df_validation))
-        dataloaders = get_dataloaders(CFG, get_datasets(CFG, data, df_train[df_train['rater_group']=='high'], df_validation))
+        dataloaders_init = get_dataloaders(CFG, get_datasets(CFG, data, df_train[df_train['rater_group']=='low'], df_validation[df_validation['rater_group']=='low']))
+        dataloaders = get_dataloaders(CFG, get_datasets(CFG, data, df_train[df_train['rater_group']=='high'], df_validation[df_validation['rater_group']=='high']))
 
         # Training
         trainer = Trainer(model, dataloaders_init, loss_fn, optimizer, scheduler, device, state_filename=state_filename, metric='kl_divergence', wandb_log=wandb_log)
@@ -73,6 +75,8 @@ def train_model(CFG, data, df_train, df_validation, state_filename, validate=Tru
         scheduler = get_scheduler(optimizer, CFG)
         trainer.optimizer = optimizer
         trainer.scheduler = scheduler
+        trainer.load_best_state()
+        trainer.best_metric = np.inf  # Reset best metric, so only second stage models can be the best
         trainer.train_epochs(num_epochs=CFG.epochs-CFG.init_epochs, validate=validate)
 
         trainer.save_state(state_filename)
@@ -96,6 +100,8 @@ def sampler(x, n):
 
 def load_data(CFG):
     df = pd.read_csv(os.path.join(CFG.data_dir, 'train.csv'))
+    if CFG.debug:
+        df = df.sample(1000)
     data = dict()
     if CFG.data_type == 'spec' or CFG.data_type == 'spec+eeg_tf':
         data['spec_data'] = np.load(os.path.join(CFG.data_dir, 'spec_data.npy'), allow_pickle=True).item()
@@ -118,6 +124,8 @@ def load_data(CFG):
         pass
     elif CFG.spec_trial_selection == 'first':
         df = df.groupby('spectrogram_id').head(1).reset_index(drop=True)
+    elif CFG.spec_trial_selection == 'first_unique_vote':
+        df = df.groupby(['spectrogram_id', 'seizure_vote', 'lpd_vote', 'gpd_vote', 'lrda_vote', 'grda_vote', 'other_vote']).head(1).reset_index(drop=True)
     elif CFG.spec_trial_selection == 'random':
         df = df.groupby('spectrogram_id').apply(lambda x: sampler(x, CFG.spec_random_trial_num)).reset_index(drop=True)
 
@@ -126,6 +134,8 @@ def load_data(CFG):
         pass
     elif CFG.eeg_trial_selection == 'first':
         df = df.groupby('eeg_id').head(1).reset_index(drop=True)
+    elif CFG.eeg_trial_selection == 'first_unique_vote':
+        df = df.groupby(['eeg_id', 'seizure_vote', 'lpd_vote', 'gpd_vote', 'lrda_vote', 'grda_vote', 'other_vote']).head(1).reset_index(drop=True)
     elif CFG.eeg_trial_selection == 'random':
         df = df.groupby('eeg_id').apply(lambda x: sampler(x, CFG.eeg_random_trial_num)).reset_index(drop=True)
     elif CFG.eeg_trial_selection == 'first+last':
@@ -182,7 +192,7 @@ def train(CFG):
     os.makedirs(model_dir, exist_ok=True)
 
     # Seed
-    seed_everything(CFG.seed)
+    seed_everything(CFG.seed, CFG.deterministic, CFG.benchmark)
 
     # Load data
     df, data = load_data(CFG)

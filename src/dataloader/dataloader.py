@@ -2,6 +2,7 @@ import os
 import numpy as np
 import random
 from functools import partial
+import mne
 
 import torch
 from torch import nn
@@ -27,7 +28,9 @@ class HMSDataset(Dataset):
         self.eeg_data = data['eeg_data']
         self.eeg_tf_data = data['eeg_tf_data']
         self.transform = transform
-        self.data_type = CFG.data_type # 'spec' or 'eeg_tf'
+        self.data_type = CFG.data_type
+        self.ch_list = CFG.ch_list
+        self.ch_pairs = CFG.ch_pairs
 
     def __len__(self):
         return len(self.df)
@@ -57,23 +60,50 @@ class HMSDataset(Dataset):
         # Load eeg tf image
         if self.data_type == 'eeg_tf' or self.data_type == 'spec+eeg_tf':
             eeg_id = self.eeg_ids[idx]
-            eeg_sub_id = self.eeg_sub_ids[idx]
             if isinstance(self.eeg_tf_data, dict):
                 eeg_tf_image = self.eeg_tf_data[eeg_id]
             elif os.path.isdir(self.eeg_tf_data):
+                eeg_sub_id = self.eeg_sub_ids[idx]
                 eeg_tf_image = np.load(os.path.join(self.eeg_tf_data, f'{eeg_id}_{eeg_sub_id}.npy'), allow_pickle=True)
 
             eeg_tf_image = eeg_tf_image[..., None]
+        
+        # Load raw eeg data
+        if self.data_type == 'eeg':
+            mne.set_log_level('warning')
+            eeg_id = self.eeg_ids[idx]
+            eeg_raw = self.eeg_data[eeg_id]
+            eeg_raw = np.nan_to_num(eeg_raw, nan=0.0)
 
-            # # Make it 3 channel
-            # eeg_tf_image = np.repeat(eeg_tf_image, 3, axis =-1)
+            # Dipoles
+            arr_list = []
+            for (ch1, ch2) in self.ch_pairs:
+                arr_list.append(eeg_raw[:,self.ch_list.index(ch1)] - eeg_raw[:,self.ch_list.index(ch2)])
+            arr_list.append(eeg_raw[:,self.ch_list.index('EKG')])
+            eeg_raw = np.stack(arr_list, axis=0)
+            ch_names = ['-'.join(pair) for pair in self.ch_pairs] + ['EKG']
 
+            # LP filter, crop, downsample
+            raw = mne.io.RawArray(eeg_raw, mne.create_info(ch_names=ch_names, sfreq=200, ch_types=['eeg']*(len(ch_names)-1) + ['ecg']))
+            raw = raw.filter(0.5, 20, picks=['eeg', 'ecg'])
+            raw = raw.crop(tmin=self.eeg_offsets[idx], tmax=self.eeg_offsets[idx] + 50, include_tmax=False)
+            raw = raw.resample(40)
+            eeg_raw = raw.get_data()
+
+            # Rescale EKG to std of EEG channels
+            eeg_raw[-1] = eeg_raw[-1] / (eeg_raw[-1, 100:-100].std() + 1e-6) * eeg_raw[:-1, 100:-100].std(1).mean()
+
+            # Clip and scale
+            eeg_raw = np.clip(eeg_raw, -1024, 1024) 
+            eeg_raw = np.nan_to_num(eeg_raw, nan=0.0) / 32.0
+            eeg_raw = eeg_raw.astype(np.float32).T
+            # eeg_raw = eeg_raw[:, :8]
 
         # Combination of spec and eeg_tf
         if self.data_type == 'spec+eeg_tf':
             if self.transform:
-                spec_image = self.transform(image=spec_image)['image']
-                eeg_tf_image = self.transform(image=eeg_tf_image)['image']
+                spec_image = self.transform['spec'](image=spec_image)['image']
+                eeg_tf_image = self.transform['eeg_tf'](image=eeg_tf_image)['image']
             return spec_image, eeg_tf_image, torch.from_numpy(self.targets[idx])
 
         # Final image
@@ -81,6 +111,8 @@ class HMSDataset(Dataset):
             image = spec_image
         elif self.data_type == 'eeg_tf':
             image = eeg_tf_image
+        elif self.data_type == 'eeg':
+            return eeg_raw, torch.from_numpy(self.targets[idx])
         
         if self.transform:
             image = self.transform(image=image)['image']
@@ -122,6 +154,17 @@ def get_datasets(CFG, data, df_train, df_validation):
      A.Compose([
         ToTensorV2()
     ])}
+
+    # Separate transform for spec and eeg_tf
+    if CFG.data_type == 'spec+eeg_tf':
+        transform = {
+        'train':
+            {'spec': A.Compose([A.CoarseDropout(p=0.5, max_holes=8, max_height=64, max_width=64), ToTensorV2()]),
+             'eeg_tf': A.Compose([A.CoarseDropout(p=0.5, max_holes=8, max_height=128, max_width=128), ToTensorV2()])},
+        'validation':
+            {'spec': A.Compose([ToTensorV2()]), 
+             'eeg_tf': A.Compose([ToTensorV2()])}
+        }
     
     train_dataset = HMSDataset(CFG, df=df_train, data=data, transform=transform['train'])
     validation_dataset = HMSDataset(CFG, df=df_validation, data=data, transform=transform['validation'])
@@ -163,14 +206,23 @@ class MixUpOneHot(v2.MixUp):
         return label.roll(1, 0).mul_(1.0 - lam).add_(label.mul(lam))
     
 def get_dataloaders(CFG, datasets):
+    if CFG.data_type == 'eeg':
+        drop_last = True
+    else:
+        drop_last = False
+
     if CFG.use_mixup:
         mixup = MixUpOneHot(alpha=CFG.mixup_alpha, num_classes=CFG.num_classes)
         def collate_fn(batch):
             return mixup(*default_collate(batch))
-        train_loader = DataLoader(datasets['train'], batch_size=CFG.batch_size, shuffle=True, num_workers=CFG.dataloader_num_workers, collate_fn=collate_fn, pin_memory=True)
-        validation_loader = DataLoader(datasets['validation'], batch_size=CFG.batch_size, shuffle=False, num_workers=CFG.dataloader_num_workers, pin_memory=True)
+        train_loader = DataLoader(datasets['train'], batch_size=CFG.batch_size, shuffle=True, num_workers=CFG.dataloader_num_workers, 
+                                  collate_fn=collate_fn, pin_memory=CFG.pin_memory, drop_last=drop_last)
+        validation_loader = DataLoader(datasets['validation'], batch_size=CFG.batch_size, shuffle=False, num_workers=CFG.dataloader_num_workers, 
+                                       pin_memory=CFG.pin_memory, drop_last=drop_last)
     else:
-        train_loader = DataLoader(datasets['train'], batch_size=CFG.batch_size, shuffle=True, num_workers=CFG.dataloader_num_workers, pin_memory=True)
-        validation_loader = DataLoader(datasets['validation'], batch_size=CFG.batch_size, shuffle=False, num_workers=CFG.dataloader_num_workers, pin_memory=True)
+        train_loader = DataLoader(datasets['train'], batch_size=CFG.batch_size, shuffle=True, num_workers=CFG.dataloader_num_workers, 
+                                  pin_memory=CFG.pin_memory, drop_last=drop_last)
+        validation_loader = DataLoader(datasets['validation'], batch_size=CFG.batch_size, shuffle=False, num_workers=CFG.dataloader_num_workers, 
+                                       pin_memory=CFG.pin_memory, drop_last=drop_last)
     dataloaders = {'train': train_loader, 'validation': validation_loader}
     return dataloaders
