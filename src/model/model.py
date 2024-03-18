@@ -74,7 +74,7 @@ class Wave_Block(nn.Module):
             tanh_out = torch.tanh(self.filter_convs[i](x))
             sigmoid_out = torch.sigmoid(self.gate_convs[i](x))
             x = tanh_out * sigmoid_out
-            x = self.convs[i + 1](x) 
+            x = self.convs[i + 1](x)
             res = res + x
         return res
     
@@ -83,9 +83,13 @@ class WaveNet(nn.Module):
         super(WaveNet, self).__init__()
         self.model = nn.Sequential(
                 Wave_Block(input_channels, 8, 12, kernel_size),
+                nn.AvgPool1d(10),
                 Wave_Block(8, 16, 8, kernel_size),
+                nn.AvgPool1d(5),
                 Wave_Block(16, 32, 4, kernel_size),
-                Wave_Block(32, 64, 1, kernel_size) 
+                nn.AvgPool1d(5),
+                Wave_Block(32, 64, 1, kernel_size),
+                nn.AvgPool1d(5)
         )
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = x.permute(0, 2, 1) 
@@ -93,37 +97,67 @@ class WaveNet(nn.Module):
 
 
 class WaveNetCustom(nn.Module):
-    def __init__(self, eeg_ch):
+    def __init__(self, num_classes, eeg_ch, dropout=0.0, hidden_features=64):
         super(WaveNetCustom, self).__init__()
         self.model = WaveNet()
         self.global_avg_pooling = nn.AdaptiveAvgPool1d(1)
-        self.dropout = 0.0
+        self.dropout = dropout
+        self.hidden_features = hidden_features
         self.head = nn.Sequential(
-            nn.Linear(eeg_ch*64, 64),
-            nn.BatchNorm1d(64),
+            nn.Linear(eeg_ch*64, self.hidden_features),
+            nn.BatchNorm1d(self.hidden_features),
             nn.ReLU(),
             nn.Dropout(self.dropout),
-            nn.Linear(64, 6)
+            nn.Linear(self.hidden_features, num_classes)
         )
+        self.lstm = nn.LSTM(64, 64, 1)
+        self.lstm_dropout = nn.Dropout(0.5)
         
     def forward(self, x: torch.Tensor):
         bs, t, c = x.shape
         x = x.permute(0, 2, 1)
         x = x.reshape(bs*c, t, 1)
         x = self.model(x)
+
+        # LSTM
+        x = x.permute(0, 2, 1)
+        x, (h_n, c_n) = self.lstm(x)
+        x = self.lstm_dropout(x)
+        x = x.permute(0, 2, 1)
+
         x = self.global_avg_pooling(x)
         x = x.reshape(bs, -1)
 
-        # z_list = []
-        # for i in range(x.shape[-1]):
-        #     x1 = self.model(x[:, :, i:i+1])
-        #     x1 = self.global_avg_pooling(x1)
-        #     x1 = x1.squeeze()
-        #     z_list.append(x1)
-        # print(x1.shape)
+        return self.head(x)
+    
+class WaveNetCustom2(nn.Module):
+    def __init__(self, num_classes, eeg_ch, dropout=0.0, hidden_features=64):
+        super(WaveNetCustom2, self).__init__()
+        self.model = nn.Sequential(
+            Wave_Block(eeg_ch, 16, 8, 3),
+            nn.AvgPool1d(5),
+            Wave_Block(16, 32, 5, 3),
+            nn.AvgPool1d(5),
+            Wave_Block(32, 64, 3, 3),
+            nn.AvgPool1d(5),
+            Wave_Block(64, 64, 2, 3)
+            # nn.AvgPool1d(5),
+        )
+        self.global_avg_pooling = nn.AdaptiveAvgPool1d(1)
+        self.dropout = dropout
+        self.hidden_features = hidden_features
+        self.head = nn.Sequential(
+            nn.Linear(64, self.hidden_features),
+            nn.BatchNorm1d(self.hidden_features),
+            nn.ReLU(),
+            nn.Dropout(self.dropout),
+            nn.Linear(self.hidden_features, num_classes)
+        )
         
-        # x = torch.cat(z_list, dim=1)
-        # print(x.shape)
+    def forward(self, x: torch.Tensor):
+        x = x.permute(0, 2, 1) # (bs, t, c) -> (bs, c, t)
+        x = self.model(x)
+        x = self.global_avg_pooling(x).squeeze()
 
         return self.head(x)
     

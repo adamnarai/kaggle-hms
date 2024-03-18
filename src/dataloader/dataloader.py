@@ -31,6 +31,7 @@ class HMSDataset(Dataset):
         self.data_type = CFG.data_type
         self.ch_list = CFG.ch_list
         self.ch_pairs = CFG.ch_pairs
+        self.filt_hp = CFG.filt_hp
 
     def __len__(self):
         return len(self.df)
@@ -79,25 +80,25 @@ class HMSDataset(Dataset):
             arr_list = []
             for (ch1, ch2) in self.ch_pairs:
                 arr_list.append(eeg_raw[:,self.ch_list.index(ch1)] - eeg_raw[:,self.ch_list.index(ch2)])
-            arr_list.append(eeg_raw[:,self.ch_list.index('EKG')])
+            # arr_list.append(eeg_raw[:,self.ch_list.index('EKG')])
             eeg_raw = np.stack(arr_list, axis=0)
-            ch_names = ['-'.join(pair) for pair in self.ch_pairs] + ['EKG']
+            ch_names = ['-'.join(pair) for pair in self.ch_pairs] #+ ['EKG']
+
+            # # Raw channels
+            # eeg_raw = eeg_raw[:, :-1].T
+            # ch_names = self.ch_list[:-1]
 
             # LP filter, crop, downsample
             raw = mne.io.RawArray(eeg_raw, mne.create_info(ch_names=ch_names, sfreq=200, ch_types=['eeg']*(len(ch_names)-1) + ['ecg']))
-            raw = raw.filter(0.5, 20, picks=['eeg', 'ecg'])
+            raw = raw.filter(self.filt_hp, None, picks=['eeg', 'ecg'])
             raw = raw.crop(tmin=self.eeg_offsets[idx], tmax=self.eeg_offsets[idx] + 50, include_tmax=False)
-            raw = raw.resample(40)
+            # raw = raw.resample(100)
             eeg_raw = raw.get_data()
 
-            # Rescale EKG to std of EEG channels
-            eeg_raw[-1] = eeg_raw[-1] / (eeg_raw[-1, 100:-100].std() + 1e-6) * eeg_raw[:-1, 100:-100].std(1).mean()
-
             # Clip and scale
-            eeg_raw = np.clip(eeg_raw, -1024, 1024) 
+            eeg_raw = np.clip(eeg_raw, -1024, 1024)
             eeg_raw = np.nan_to_num(eeg_raw, nan=0.0) / 32.0
             eeg_raw = eeg_raw.astype(np.float32).T
-            # eeg_raw = eeg_raw[:, :8]
 
         # Combination of spec and eeg_tf
         if self.data_type == 'spec+eeg_tf':
