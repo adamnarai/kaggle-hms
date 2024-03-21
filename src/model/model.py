@@ -82,14 +82,14 @@ class WaveNet(nn.Module):
     def __init__(self, input_channels: int = 1, kernel_size: int = 3):
         super(WaveNet, self).__init__()
         self.model = nn.Sequential(
-                Wave_Block(input_channels, 8, 12, kernel_size),
+                Wave_Block(input_channels, 16, 8, kernel_size),
                 nn.AvgPool1d(10),
-                Wave_Block(8, 16, 8, kernel_size),
-                nn.AvgPool1d(5),
-                Wave_Block(16, 32, 4, kernel_size),
-                nn.AvgPool1d(5),
-                Wave_Block(32, 64, 1, kernel_size),
-                nn.AvgPool1d(5)
+                Wave_Block(16, 32, 5, kernel_size),
+                nn.AvgPool1d(10),
+                Wave_Block(32, 64, 3, kernel_size),
+                nn.AvgPool1d(10),
+                Wave_Block(64, 64, 2, kernel_size),
+                nn.AvgPool1d(2)
         )
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = x.permute(0, 2, 1) 

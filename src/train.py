@@ -37,7 +37,7 @@ def get_scheduler(optimizer, CFG):
     if CFG.scheduler == 'StepLR':
         scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=CFG.scheduler_step_size, gamma=CFG.lr_gamma)
     elif CFG.scheduler == 'CyclicLR':
-        scheduler = optim.lr_scheduler.CyclicLR(optimizer, base_lr=CFG.base_lr, max_lr=CFG.base_lr*5,
+        scheduler = optim.lr_scheduler.CyclicLR(optimizer, base_lr=CFG.base_lr / 5, max_lr=CFG.base_lr,
                                                 step_size_up=5, cycle_momentum=False, mode='triangular2')
     elif CFG.scheduler == 'CosineAnnealingLR':
         scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=CFG.epochs+CFG.freeze_epochs)
