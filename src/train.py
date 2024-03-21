@@ -13,7 +13,7 @@ from sklearn.model_selection import StratifiedGroupKFold
 from dataloader import get_dataloaders, get_datasets
 from utils import seed_everything
 from trainer import Trainer
-from model.model import SpecCNN, SpecTfCNN, WaveNetCustom, WaveNetCustom2
+from model.model import SpecCNN, SpecTfCNN, WaveNetCustom, SpecTfEEGCNN, WaveNetCustom2
 
 def get_loss_fn(CFG):
     if CFG.loss == 'CrossEntropyLoss':
@@ -51,6 +51,8 @@ def train_model(CFG, data, df_train, df_validation, state_filename, validate=Tru
     # Model definition
     if CFG.data_type == 'spec+eeg_tf':
         model = SpecTfCNN(model_name=CFG.base_model, num_classes=len(CFG.TARGETS), pretrained=CFG.pretrained).to(device)
+    elif CFG.data_type == 'spec+eeg_tf+eeg':
+        model = SpecTfEEGCNN(model_name=CFG.base_model, num_classes=len(CFG.TARGETS), pretrained=CFG.pretrained, **CFG.wavenet_params).to(device)
     elif CFG.data_type == 'eeg':
         model = WaveNetCustom(num_classes=len(CFG.TARGETS), **CFG.wavenet_params).to(device)
     else:
@@ -103,18 +105,18 @@ def load_data(CFG):
     if CFG.debug:
         df = df.sample(1000)
     data = dict()
-    if CFG.data_type == 'spec' or CFG.data_type == 'spec+eeg_tf':
+    if CFG.data_type == 'spec' or CFG.data_type == 'spec+eeg_tf' or CFG.data_type == 'spec+eeg_tf+eeg':
         data['spec_data'] = np.load(os.path.join(CFG.data_dir, 'spec_data.npy'), allow_pickle=True).item()
     else:
         data['spec_data'] = []
-    if CFG.data_type == 'eeg_tf' or CFG.data_type == 'spec+eeg_tf':
+    if CFG.data_type == 'eeg_tf' or CFG.data_type == 'spec+eeg_tf' or CFG.data_type == 'spec+eeg_tf+eeg':
         if os.path.isfile(os.path.join(CFG.data_dir, f'{CFG.eeg_tf_data}.npy')):
             data['eeg_tf_data'] = np.load(os.path.join(CFG.data_dir, f'{CFG.eeg_tf_data}.npy'), allow_pickle=True).item()
         elif os.path.isdir(os.path.join(CFG.data_dir, f'{CFG.eeg_tf_data}')):
             data['eeg_tf_data'] = os.path.join(CFG.data_dir, f'{CFG.eeg_tf_data}')
     else:
         data['eeg_tf_data'] = []
-    if CFG.data_type == 'eeg':
+    if CFG.data_type == 'eeg' or CFG.data_type == 'spec+eeg_tf+eeg':
         data['eeg_data'] = np.load(os.path.join(CFG.data_dir, 'eeg_data.npy'), allow_pickle=True).item()
     else:
         data['eeg_data'] = []

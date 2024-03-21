@@ -32,13 +32,14 @@ class HMSDataset(Dataset):
         self.ch_list = CFG.ch_list
         self.ch_pairs = CFG.ch_pairs
         self.filt_hp = CFG.filt_hp
+        self.drop_ecg = CFG.drop_ecg
 
     def __len__(self):
         return len(self.df)
 
     def __getitem__(self, idx):
         # Load spec image
-        if self.data_type == 'spec' or self.data_type == 'spec+eeg_tf':
+        if self.data_type == 'spec' or self.data_type == 'spec+eeg_tf' or self.data_type == 'spec+eeg_tf+eeg':
             spec_id = self.spec_ids[idx]
             offset = self.spec_offsets[idx]
             spec_image = self.spec_data[spec_id]
@@ -59,7 +60,7 @@ class HMSDataset(Dataset):
             spec_image = spec_image[..., None]
 
         # Load eeg tf image
-        if self.data_type == 'eeg_tf' or self.data_type == 'spec+eeg_tf':
+        if self.data_type == 'eeg_tf' or self.data_type == 'spec+eeg_tf' or self.data_type == 'spec+eeg_tf+eeg':
             eeg_id = self.eeg_ids[idx]
             if isinstance(self.eeg_tf_data, dict):
                 eeg_tf_image = self.eeg_tf_data[eeg_id]
@@ -68,9 +69,12 @@ class HMSDataset(Dataset):
                 eeg_tf_image = np.load(os.path.join(self.eeg_tf_data, f'{eeg_id}_{eeg_sub_id}.npy'), allow_pickle=True)
 
             eeg_tf_image = eeg_tf_image[..., None]
+
+            if self.drop_ecg:
+                eeg_tf_image = eeg_tf_image[:(18*28), ...]
         
         # Load raw eeg data
-        if self.data_type == 'eeg':
+        if self.data_type == 'eeg' or self.data_type == 'spec+eeg_tf+eeg':
             mne.set_log_level('warning')
             eeg_id = self.eeg_ids[idx]
             eeg_raw = self.eeg_data[eeg_id]
@@ -83,10 +87,6 @@ class HMSDataset(Dataset):
             # arr_list.append(eeg_raw[:,self.ch_list.index('EKG')])
             eeg_raw = np.stack(arr_list, axis=0)
             ch_names = ['-'.join(pair) for pair in self.ch_pairs] #+ ['EKG']
-
-            # # Raw channels
-            # eeg_raw = eeg_raw[:, :-1].T
-            # ch_names = self.ch_list[:-1]
 
             # LP filter, crop, downsample
             raw = mne.io.RawArray(eeg_raw, mne.create_info(ch_names=ch_names, sfreq=200, ch_types=['eeg']*(len(ch_names)-1) + ['ecg']))
@@ -106,6 +106,12 @@ class HMSDataset(Dataset):
                 spec_image = self.transform['spec'](image=spec_image)['image']
                 eeg_tf_image = self.transform['eeg_tf'](image=eeg_tf_image)['image']
             return spec_image, eeg_tf_image, torch.from_numpy(self.targets[idx])
+        elif self.data_type == 'spec+eeg_tf+eeg':
+            if self.transform:
+                spec_image = self.transform['spec'](image=spec_image)['image']
+                eeg_tf_image = self.transform['eeg_tf'](image=eeg_tf_image)['image']
+                # eeg_raw = self.transform['eeg'](image=eeg_raw)['image']
+            return spec_image, eeg_tf_image, eeg_raw, torch.from_numpy(self.targets[idx])
 
         # Final image
         if self.data_type == 'spec':
@@ -113,7 +119,7 @@ class HMSDataset(Dataset):
         elif self.data_type == 'eeg_tf':
             image = eeg_tf_image
         elif self.data_type == 'eeg':
-            return eeg_raw, torch.from_numpy(self.targets[idx])
+            image = eeg_raw
         
         if self.transform:
             image = self.transform(image=image)['image']
@@ -134,37 +140,36 @@ def ch_vertical_flip(image, ch_num=19, p=0.5, **kwargs):
     return image
 
 def get_datasets(CFG, data, df_train, df_validation):
-    transform = {
-    'train':
-    A.Compose([
-        # A.RingingOvershoot(**CFG.ringing_overshoot_args),
-        # A.MedianBlur(**CFG.median_blur_args),
-        # A.Sharpen(**CFG.sharpen_args),
-        # A.XYMasking(**CFG.xy_masking_args),
-        # A.RandomGamma(),
-        # A.MultiplicativeNoise(),
-        # A.RandomBrightnessContrast(),
-        # A.PixelDropout(drop_value=0.5),
-        # A.VerticalFlip(p=CFG.vertical_flip_p),
-        # A.Lambda(image=partial(ch_vertical_flip, **CFG.ch_vertical_flip_args)),
-        A.CoarseDropout(**CFG.coarse_dropout_args),
-        # A.Lambda(image=partial(time_crop_mask, **CFG.time_crop_args), p=CFG.time_crop_p),
-        ToTensorV2()
-    ]),
-    'validation':
-     A.Compose([
-        ToTensorV2()
-    ])}
-
-    # Separate transform for spec and eeg_tf
-    if CFG.data_type == 'spec+eeg_tf':
+    if CFG.data_type == 'spec' or CFG.data_type == 'eeg_tf':
+        transform = {
+        'train':
+        A.Compose([
+            A.CoarseDropout(**CFG.coarse_dropout_args),
+            ToTensorV2()
+        ]),
+        'validation':
+        A.Compose([
+            ToTensorV2()
+        ])}
+    elif CFG.data_type == 'spec+eeg_tf' or CFG.data_type == 'spec+eeg_tf+eeg':
         transform = {
         'train':
             {'spec': A.Compose([A.CoarseDropout(p=0.5, max_holes=8, max_height=64, max_width=64), ToTensorV2()]),
-             'eeg_tf': A.Compose([A.CoarseDropout(p=0.5, max_holes=8, max_height=128, max_width=128), ToTensorV2()])},
+             'eeg_tf': A.Compose([A.CoarseDropout(p=0.5, max_holes=8, max_height=128, max_width=128), ToTensorV2()]),
+             'eeg': None},
         'validation':
             {'spec': A.Compose([ToTensorV2()]), 
-             'eeg_tf': A.Compose([ToTensorV2()])}
+             'eeg_tf': A.Compose([ToTensorV2()]),
+             'eeg': None}
+        }
+    elif CFG.data_type == 'eeg':
+        transform = {
+        'train': #None,
+            A.Compose([
+                A.XYMasking(**CFG.xymasking_args)
+            ]),
+        'validation':
+            None
         }
     
     train_dataset = HMSDataset(CFG, df=df_train, data=data, transform=transform['train'])
@@ -207,7 +212,7 @@ class MixUpOneHot(v2.MixUp):
         return label.roll(1, 0).mul_(1.0 - lam).add_(label.mul(lam))
     
 def get_dataloaders(CFG, datasets):
-    if CFG.data_type == 'eeg':
+    if CFG.data_type == 'eeg' or CFG.data_type == 'spec+eeg_tf+eeg':
         drop_last = True
     else:
         drop_last = False

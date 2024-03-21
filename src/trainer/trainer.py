@@ -85,6 +85,10 @@ class Trainer:
                 X1, X2, y = batch
                 X1, X2, y = X1.to(self.device, non_blocking=True), X2.to(self.device, non_blocking=True), y.to(self.device, non_blocking=True)
                 pred = self.model(X1, X2)
+            elif len(batch) == 4:
+                X1, X2, X3, y = batch
+                X1, X2, X3, y = X1.to(self.device, non_blocking=True), X2.to(self.device, non_blocking=True), X3.to(self.device, non_blocking=True), y.to(self.device, non_blocking=True)
+                pred = self.model(X1, X2, X3)
 
             # Compute prediction error
             loss = self.loss_fn(F.log_softmax(pred, dim=-1), y)
@@ -119,6 +123,10 @@ class Trainer:
                     X1, X2, y = batch
                     X1, X2, y = X1.to(self.device, non_blocking=True), X2.to(self.device, non_blocking=True), y.to(self.device, non_blocking=True)
                     pred = self.model(X1, X2)
+                elif len(batch) == 4:
+                    X1, X2, X3, y = batch
+                    X1, X2, X3, y = X1.to(self.device, non_blocking=True), X2.to(self.device, non_blocking=True), X3.to(self.device, non_blocking=True), y.to(self.device, non_blocking=True)
+                    pred = self.model(X1, X2, X3)
 
                 test_loss += self.loss_fn(F.log_softmax(pred, dim=-1), y).item()
                 if self.metric == 'balanced_accuracy':
