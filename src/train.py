@@ -13,7 +13,7 @@ from sklearn.model_selection import StratifiedGroupKFold
 from dataloader import get_dataloaders, get_datasets
 from utils import seed_everything
 from trainer import Trainer
-from model.model import SpecCNN, SpecTfCNN, WaveNetCustom, SpecTfEEGCNN, WaveNetCustom2
+from model.model import SpecCNN, SpecTfCNN, WaveNetCustom, SpecTfEEGCNN
 
 def get_loss_fn(CFG):
     if CFG.loss == 'CrossEntropyLoss':
@@ -52,7 +52,8 @@ def train_model(CFG, data, df_train, df_validation, state_filename, validate=Tru
     if CFG.data_type == 'spec+eeg_tf':
         model = SpecTfCNN(model_name=CFG.base_model, num_classes=len(CFG.TARGETS), pretrained=CFG.pretrained).to(device)
     elif CFG.data_type == 'spec+eeg_tf+eeg':
-        model = SpecTfEEGCNN(model_name=CFG.base_model, num_classes=len(CFG.TARGETS), pretrained=CFG.pretrained, **CFG.wavenet_params).to(device)
+        model = SpecTfEEGCNN(model_name=CFG.base_model, num_classes=len(CFG.TARGETS), pretrained=CFG.pretrained, **CFG.wavenet_params, 
+                             eeg_pretrain=CFG.eeg_ens_pretrained).to(device)
     elif CFG.data_type == 'eeg':
         model = WaveNetCustom(num_classes=len(CFG.TARGETS), **CFG.wavenet_params).to(device)
     else:

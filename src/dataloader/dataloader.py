@@ -110,7 +110,8 @@ class HMSDataset(Dataset):
             if self.transform:
                 spec_image = self.transform['spec'](image=spec_image)['image']
                 eeg_tf_image = self.transform['eeg_tf'](image=eeg_tf_image)['image']
-                # eeg_raw = self.transform['eeg'](image=eeg_raw)['image']
+                if self.transform['eeg']:
+                    eeg_raw = self.transform['eeg'](image=eeg_raw)['image']
             return spec_image, eeg_tf_image, eeg_raw, torch.from_numpy(self.targets[idx])
 
         # Final image
@@ -156,7 +157,7 @@ def get_datasets(CFG, data, df_train, df_validation):
         'train':
             {'spec': A.Compose([A.CoarseDropout(p=0.5, max_holes=8, max_height=64, max_width=64), ToTensorV2()]),
              'eeg_tf': A.Compose([A.CoarseDropout(p=0.5, max_holes=8, max_height=128, max_width=128), ToTensorV2()]),
-             'eeg': None},
+             'eeg': A.Compose([A.XYMasking(p=0.5, num_masks_y=(2, 4), mask_y_length=(500, 2000))])},
         'validation':
             {'spec': A.Compose([ToTensorV2()]), 
              'eeg_tf': A.Compose([ToTensorV2()]),

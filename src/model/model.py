@@ -95,14 +95,15 @@ class WaveNet(nn.Module):
         x = x.permute(0, 2, 1) 
         return self.model(x)
 
-
 class WaveNetCustom(nn.Module):
-    def __init__(self, num_classes, eeg_ch, dropout=0.0, hidden_features=64, headless=False):
+    def __init__(self, num_classes, eeg_ch, dropout=0.0, hidden_features=64):
         super(WaveNetCustom, self).__init__()
         self.model = WaveNet()
         self.global_avg_pooling = nn.AdaptiveAvgPool1d(1)
         self.dropout = dropout
         self.hidden_features = hidden_features
+        self.lstm = nn.LSTM(64, 64, 1)
+        self.lstm_dropout = nn.Dropout(0.5)
         self.head = nn.Sequential(
             nn.Linear(eeg_ch*64, self.hidden_features),
             nn.BatchNorm1d(self.hidden_features),
@@ -110,9 +111,6 @@ class WaveNetCustom(nn.Module):
             nn.Dropout(self.dropout),
             nn.Linear(self.hidden_features, num_classes)
         )
-        self.lstm = nn.LSTM(64, 64, 1)
-        self.lstm_dropout = nn.Dropout(0.5)
-        self.headless = headless
         
     def forward(self, x: torch.Tensor):
         bs, t, c = x.shape
@@ -129,61 +127,38 @@ class WaveNetCustom(nn.Module):
         x = self.global_avg_pooling(x)
         x = x.reshape(bs, -1)
 
-        if not self.headless:
-            return self.head(x)
-        else:
-            return x
+        return self.head(x)
     
 class SpecTfEEGCNN(nn.Module):
-    def __init__(self, model_name, num_classes, pretrained=True, eeg_ch=18, dropout=0.0, hidden_features=64):
+    def __init__(self, model_name, num_classes, pretrained=True, eeg_ch=18, dropout=0.0, hidden_features=64, eeg_pretrain=None):
         super().__init__()
         if isinstance(model_name, str) == 1:
             model_name_spec = model_name_eeg_tf = model_name
         elif isinstance(model_name, tuple) and len(model_name) == 2:
             model_name_spec, model_name_eeg_tf = model_name
         self.num_classes = num_classes
+
         self.model_spec = timm.create_model(model_name=model_name_spec, pretrained=pretrained, num_classes=128, in_chans=1)
         self.model_eeg_tf = timm.create_model(model_name=model_name_eeg_tf, pretrained=pretrained, num_classes=128, in_chans=1)
-        self.model_eeg = WaveNetCustom(num_classes=num_classes, eeg_ch=eeg_ch, dropout=dropout, hidden_features=hidden_features, headless=True)
-        self.eeg_head = nn.Sequential(
+
+        self.model_eeg = WaveNetCustom(num_classes=num_classes, eeg_ch=eeg_ch, dropout=dropout, hidden_features=hidden_features)
+        if eeg_pretrain is not None:
+            self.model_eeg.load_state_dict(torch.load(eeg_pretrain))
+        self.model_eeg.head = nn.Sequential(
             nn.Linear(eeg_ch*64, 128),
             nn.BatchNorm1d(128),
             nn.ReLU()
         )
+
+        # # Freeze layers
+        # for param in self.model_eeg.parameters():
+        #     param.requires_grad = False
+        # for param in self.model_eeg.head.parameters():
+        #     param.requires_grad = True
+
         self.classifier = nn.Linear(3*128, num_classes)
     
     def forward(self, x1, x2, x3):
-        x = torch.cat((self.model_spec(x1), self.model_eeg_tf(x2), self.eeg_head(self.model_eeg(x3))), dim=1)
+        x = torch.cat((self.model_spec(x1), self.model_eeg_tf(x2), self.model_eeg(x3)), dim=1)
         return self.classifier(x)
-    
-class WaveNetCustom2(nn.Module):
-    def __init__(self, num_classes, eeg_ch, dropout=0.0, hidden_features=64):
-        super(WaveNetCustom2, self).__init__()
-        self.model = nn.Sequential(
-            Wave_Block(eeg_ch, 16, 8, 3),
-            nn.AvgPool1d(5),
-            Wave_Block(16, 32, 5, 3),
-            nn.AvgPool1d(5),
-            Wave_Block(32, 64, 3, 3),
-            nn.AvgPool1d(5),
-            Wave_Block(64, 64, 2, 3)
-            # nn.AvgPool1d(5),
-        )
-        self.global_avg_pooling = nn.AdaptiveAvgPool1d(1)
-        self.dropout = dropout
-        self.hidden_features = hidden_features
-        self.head = nn.Sequential(
-            nn.Linear(64, self.hidden_features),
-            nn.BatchNorm1d(self.hidden_features),
-            nn.ReLU(),
-            nn.Dropout(self.dropout),
-            nn.Linear(self.hidden_features, num_classes)
-        )
-        
-    def forward(self, x: torch.Tensor):
-        x = x.permute(0, 2, 1) # (bs, t, c) -> (bs, c, t)
-        x = self.model(x)
-        x = self.global_avg_pooling(x).squeeze()
-
-        return self.head(x)
     
