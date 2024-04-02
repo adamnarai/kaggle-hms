@@ -102,8 +102,8 @@ class WaveNetCustom(nn.Module):
         self.global_avg_pooling = nn.AdaptiveAvgPool1d(1)
         self.dropout = dropout
         self.hidden_features = hidden_features
-        self.lstm = nn.LSTM(64, 64, 1)
-        self.lstm_dropout = nn.Dropout(0.5)
+        self.rnn = nn.GRU(64, 64, 2, dropout=0.5)
+        self.rnn_dropout = nn.Dropout(0.5)
         self.head = nn.Sequential(
             nn.Linear(eeg_ch*64, self.hidden_features),
             nn.BatchNorm1d(self.hidden_features),
@@ -118,10 +118,10 @@ class WaveNetCustom(nn.Module):
         x = x.reshape(bs*c, t, 1)
         x = self.model(x)
 
-        # LSTM
+        # RNN
         x = x.permute(0, 2, 1)
-        x, (h_n, c_n) = self.lstm(x)
-        x = self.lstm_dropout(x)
+        x, _ = self.rnn(x)
+        x = self.rnn_dropout(x)
         x = x.permute(0, 2, 1)
 
         x = self.global_avg_pooling(x)
@@ -143,6 +143,7 @@ class SpecTfEEGCNN(nn.Module):
 
         self.model_eeg = WaveNetCustom(num_classes=num_classes, eeg_ch=eeg_ch, dropout=dropout, hidden_features=hidden_features)
         if eeg_pretrain is not None:
+            print(f'Loading EEG pretrain model from {eeg_pretrain}')
             self.model_eeg.load_state_dict(torch.load(eeg_pretrain))
         self.model_eeg.head = nn.Sequential(
             nn.Linear(eeg_ch*64, 128),
@@ -150,15 +151,14 @@ class SpecTfEEGCNN(nn.Module):
             nn.ReLU()
         )
 
-        # # Freeze layers
-        # for param in self.model_eeg.parameters():
-        #     param.requires_grad = False
-        # for param in self.model_eeg.head.parameters():
-        #     param.requires_grad = True
+        # Freeze layers
+        for param in self.model_eeg.parameters():
+            param.requires_grad = False
+        for param in self.model_eeg.head.parameters():
+            param.requires_grad = True
 
         self.classifier = nn.Linear(3*128, num_classes)
     
     def forward(self, x1, x2, x3):
         x = torch.cat((self.model_spec(x1), self.model_eeg_tf(x2), self.model_eeg(x3)), dim=1)
         return self.classifier(x)
-    

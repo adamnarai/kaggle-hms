@@ -45,15 +45,15 @@ def get_scheduler(optimizer, CFG):
         scheduler = optim.lr_scheduler.OneCycleLR(optimizer, max_lr=CFG.base_lr, total_steps=CFG.epochs+CFG.freeze_epochs)
     return scheduler
 
-def train_model(CFG, data, df_train, df_validation, state_filename, validate=True, wandb_log=False):
+def train_model(CFG, data, df_train, df_validation, state_filename, validate=True, wandb_log=False, cv=None):
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
     # Model definition
     if CFG.data_type == 'spec+eeg_tf':
         model = SpecTfCNN(model_name=CFG.base_model, num_classes=len(CFG.TARGETS), pretrained=CFG.pretrained).to(device)
     elif CFG.data_type == 'spec+eeg_tf+eeg':
-        model = SpecTfEEGCNN(model_name=CFG.base_model, num_classes=len(CFG.TARGETS), pretrained=CFG.pretrained, **CFG.wavenet_params, 
-                             eeg_pretrain=CFG.eeg_ens_pretrained).to(device)
+        eeg_pretrain = os.path.join(CFG.models_dir, f'{CFG.eeg_ens_pretrained}/{CFG.eeg_ens_pretrained}-cv{cv+1}_best.pt')
+        model = SpecTfEEGCNN(model_name=CFG.base_model, num_classes=len(CFG.TARGETS), pretrained=CFG.pretrained, **CFG.wavenet_params, eeg_pretrain=eeg_pretrain).to(device)
     elif CFG.data_type == 'eeg':
         model = WaveNetCustom(num_classes=len(CFG.TARGETS), **CFG.wavenet_params).to(device)
     else:
@@ -216,7 +216,7 @@ def train(CFG):
             wandb_log = True
         else:
             wandb_log = False
-        trainer = train_model(CFG, data, df_train, df_validation, state_filename, wandb_log=wandb_log)
+        trainer = train_model(CFG, data, df_train, df_validation, state_filename, wandb_log=wandb_log, cv=cv)
         best_metric_list.append(trainer.best_metric)
         metric_list.append(trainer.last_metric)
         if CFG.use_wandb:
