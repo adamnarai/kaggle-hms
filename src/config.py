@@ -20,7 +20,6 @@ class Config():
 
     # Wandb
     use_wandb = True
-    wandb_key = '1b0401db7513303bdea77fb070097f9d2850cf3b'
     tags = ['torch', 'cv', 'v2']
     notes = ''
 

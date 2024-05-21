@@ -43,6 +43,8 @@ def get_scheduler(optimizer, CFG):
         scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=CFG.epochs+CFG.freeze_epochs)
     elif CFG.scheduler == 'OneCycleLR':
         scheduler = optim.lr_scheduler.OneCycleLR(optimizer, max_lr=CFG.base_lr, total_steps=CFG.epochs+CFG.freeze_epochs)
+    elif CFG.scheduler == 'LambdaLR':
+        scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=CFG.lr_lambda)
     return scheduler
 
 def train_model(CFG, data, df_train, df_validation, state_filename, validate=True, wandb_log=False, cv=None):
@@ -152,7 +154,7 @@ def load_data(CFG):
     return df, data
 
 def init_wandb(CFG):
-    wandb.login(key=CFG.wandb_key)
+    wandb.login()
     cfg_dict = dict((key, value) for key, value in dict(CFG.__dict__).items() if not callable(value) and not key.startswith('__'))
     run = wandb.init(project=f'kaggle-{CFG.project_name}', config=cfg_dict, tags=CFG.tags, notes=CFG.notes)
     return run
@@ -212,7 +214,7 @@ def train(CFG):
     for cv, (df_train, df_validation) in enumerate(splits):
         print(f"Cross-validation fold {cv+1}/{CFG.cv_fold}")
         state_filename = os.path.join(model_dir, f'{model_name}-cv{cv+1}.pt')
-        if CFG.use_wandb and cv == 0:
+        if CFG.use_wandb:# and cv == 0:
             wandb_log = True
         else:
             wandb_log = False

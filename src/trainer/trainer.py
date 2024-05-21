@@ -54,8 +54,9 @@ class Trainer:
             else:
                 test_loss, metric = np.nan, np.nan
                 self.best_metric = np.nan
-            self.scheduler.step()
+            
             print(f"lr: {self.scheduler.get_last_lr()}")
+            self.scheduler.step()
             print(f"train loss: {train_loss:.4f}, test loss: {test_loss:.4f}, {self.metric}: {metric:.4f}\n")
             if self.wandb_log:
                 wandb.log({'train_loss': train_loss, 'valid_loss': test_loss, self.metric: metric})
